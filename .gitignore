@@ -239,3 +239,4 @@ fabric.properties
 
 # Mac Desktop Services Store
 .DS_Store
+secret hf token.txt
