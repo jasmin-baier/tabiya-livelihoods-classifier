@@ -6,6 +6,6 @@
 # STEP 2: View > Command Palette > Python: Select interpreter > CHOOSE VENV
 
 # STEP 3: In Powershell in the virtual environment, run
-python entity_extraction.py
+# python entity_extraction.py
 # OR
 python entity_extraction_loop.py
