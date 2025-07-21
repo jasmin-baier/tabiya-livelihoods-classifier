@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+import random
 from scipy import stats
 
 # Define the base path for the data files.
@@ -100,50 +101,39 @@ truth_distribution = df_skills_others['truth'].dropna()
 # Note: The 'truth' column values must be in the same scale (0-100) as percentage_above_threshold.
 percentile = stats.percentileofscore(truth_distribution, percentage_above_threshold)
 
-# --- STEP 3: Compare to baseline beliefs ---
-# Find difference
-    # Get the harambee_id from the current person's skill data
+# --- STEP 3 & 4: Compare to baseline beliefs and assign group ---
 if not df_current_person_skills.empty and 'harambee_id' in df_current_person_skills.columns:
+    # Get the harambee_id from the current person's skill data
     current_harambee_id = df_current_person_skills['harambee_id'].iloc[0]
-
     # Find the corresponding row in the beliefs dataframe
     person_belief_row = df_bl[df_bl['harambee_id'] == current_harambee_id]
 
+    # Get belief value and calculate the distance tot he truth
     if not person_belief_row.empty and 'belief_percentage_jobs' in person_belief_row.columns:
-        # Get the belief value
         belief_value = person_belief_row['belief_percentage_jobs'].iloc[0]
-
-        # Calculate the difference
         difference = percentage_above_threshold - belief_value
 
-        print(f"Belief percentage for jobs from baseline data: {belief_value:.2f}%")
-        print(f"Difference (Overlap % - Belief %): {difference:.2f}")
-    else:
-        print(f"\nWarning: Could not find matching belief data for harambee_id '{current_harambee_id}' or 'belief_percentage_jobs' column is missing.")
-else:
-    print("\nWarning: 'harambee_id' not found in skills data, cannot calculate belief difference.")
-
-# Above or below (negative or positive)
-        underconfident = False
-        high_difference = False
-
-        # Check if the difference is positive
-        if difference > 0:
-            underconfident = True
-
-# Absolute distance
+        #print(f"Belief percentage for jobs from baseline data: {belief_value:.2f}%")
+        #print(f"Difference (Truth % - Belief %): {difference:.2f}")
+        
+        # Above or below (negative or positive)
+        underconfident = difference > 0
+        
+        # Absolute distance
         # Check if the absolute value of the difference is larger than 20 # TODO might change this threshold after pilot testing
-        if abs(difference) > 20:
-            high_difference = True
+        high_difference = abs(difference) > 20
 
-# --- STEP 4: Compute group ---
-# First, there is a 50% chance that they are assigned to either group 1 or 2. Then once that is set they are seperated again in the following way:
-# Group 1a: if high_difference = True
-# Group 1b: if high_difference = False
-# Group 2a: if underconfident = True
-# Group 2b: if underconfident = False
+        #print(f"Is underconfident: {underconfident}")
+        #print(f"Is high difference: {high_difference}")
+
+        # COMPUTE GROUP
+        # First, there is a 50% chance that they are assigned to either group 1 or 2. Then once that is set they are seperated again in the following way:
+            # Group 1a: if high_difference = True
+            # Group 1b: if high_difference = False
+            # Group 2a: if underconfident = True
+            # Group 2b: if underconfident = False
         assigned_group = ""
-        # Step 1: 50% chance to be assigned to the Group 1 or Group 2 path
+
         if random.random() < 0.5:
             # Path for Group 1: Assignment based on 'high_difference'
             if high_difference:
@@ -158,3 +148,8 @@ else:
                 assigned_group = "Group 2b"
         
         print(f"Final Assigned Group: {assigned_group}")
+
+    else:
+        print(f"\nWarning: Could not find matching belief data for harambee_id '{current_harambee_id}' or 'belief_percentage_jobs' column is missing.")
+else:
+    print("\nWarning: 'harambee_id' not found in skills data, cannot calculate belief difference.")
