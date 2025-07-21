@@ -16,18 +16,25 @@ print("Number of rows in the dataset before extraction:")
 print(df.shape[0])
 #df = df.head(5) # remove again but for testing purposes only
 
+# Make sure relevant variables don't have NAs, as linker.py throws an error if they do
+df['full_details'] = df['full_details'].fillna('')
+df['job_description'] = df['job_description'].fillna('')
+df['job_requirements'] = df['job_requirements'].fillna('')
+
+
 # Open CSV file for writing results
 filepath_write = basedir + "data/pre_study/BERT_extracted_occupations_skills_uuid" + ".csv"
 with open(filepath_write, mode="w", newline="", encoding='utf-8') as file:
     writer = csv.writer(file)
-    writer.writerow(["GroupSourceID", "ReferenceNumber", "job_title", "extracted_occupation", "extracted_skills1", "extracted_skills2"])  # Header
+    writer.writerow(["GroupSourceID", "ReferenceNumber", "job_title", "full_details", "extracted_occupation", "extracted_skills1", "extracted_skills2", "extracted_requirements"])  # Header
 
     # Process each row in the Jobs Database
     for snippet in df.itertuples(index=False):
         extracted_occ = pipeline(snippet.job_title) # Extract occupation from job title
         extracted_skills1 = pipeline_skills(snippet.full_details) # Extract skills from full ad
         extracted_skills2 = pipeline_skills(snippet.job_description) # Extract skills from just job_description (check later which was better)
-        writer.writerow([snippet.GroupSourceID, snippet.ReferenceNumber, snippet.job_title, extracted_occ, extracted_skills1, extracted_skills2])
+        extracted_requirements = pipeline_skills(snippet.job_requirements) # Extract skills from job_requirements
+        writer.writerow([snippet.GroupSourceID, snippet.ReferenceNumber, snippet.job_title, snippet.full_details, extracted_occ, extracted_skills1, extracted_skills2, extracted_requirements])
 
 # Do the same with labels mostly for exploration
 pipeline_skills = EntityLinker(k=100, output_format='preffered_label')
@@ -35,14 +42,15 @@ pipeline_skills = EntityLinker(k=100, output_format='preffered_label')
 filepath_write = basedir + "data/pre_study/BERT_extracted_occupations_skills_labels" + ".csv"
 with open(filepath_write, mode="w", newline="", encoding='utf-8') as file:
     writer = csv.writer(file)
-    writer.writerow(["GroupSourceID", "ReferenceNumber", "job_title", "extracted_occupation", "extracted_skills1", "extracted_skills2"])  # Header
+    writer.writerow(["GroupSourceID", "ReferenceNumber", "job_title", "full_details", "extracted_occupation", "extracted_skills1", "extracted_skills2", "extracted_requirements"])  # Header
 
     # Process each row in the Jobs Database
     for snippet in df.itertuples(index=False):
         extracted_occ = pipeline(snippet.job_title) # Extract occupation from job title
         extracted_skills1 = pipeline_skills(snippet.full_details) # Extract skills from full ad
         extracted_skills2 = pipeline_skills(snippet.job_description) # Extract skills from just job_description (check later which was better)
-        writer.writerow([snippet.GroupSourceID, snippet.ReferenceNumber, snippet.job_title, extracted_occ, extracted_skills1, extracted_skills2])
+        extracted_requirements = pipeline_skills(snippet.job_requirements) # Extract skills from job_requirements
+        writer.writerow([snippet.GroupSourceID, snippet.ReferenceNumber, snippet.job_title, snippet.full_details, extracted_occ, extracted_skills1, extracted_skills2, extracted_requirements])
 
 # TODO later in cleaning just remove occupation from the last two extractions.
 # TODO later add evaluation bit
