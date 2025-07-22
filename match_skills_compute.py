@@ -73,6 +73,7 @@ def calculate_overlap_score(row):
         return 0.0
         
     # Calculate the final score.
+    # TODO consider weighting by taxonomy centrality to stop generic skills (e.g., “communication”) swamping the score.
     score = len(overlapping_uuids) / len(uuid_cols_jobs)
     return score
 
