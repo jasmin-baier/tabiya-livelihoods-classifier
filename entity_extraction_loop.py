@@ -2,10 +2,12 @@ import csv
 import pandas as pd
 from inference.linker import EntityLinker
 
+# TODO: Currently returns a LOT of skills (around 500 per job) -- probably overkill
+# TODO: I am using extracted_skills1 in other files now. Could reconsider.
+
 # Initialize the entity linker
 pipeline = EntityLinker(k=20, output_format='uuid') # for occupations, get 20
 pipeline_skills = EntityLinker(k=100, output_format='uuid') # for skills, get 100
-# TODO check if this works or if it always just gives one occupation?
 
 # Import Clean Harambee Jobs csv
 basedir = "C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/"

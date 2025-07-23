@@ -3,6 +3,12 @@ import os
 import random
 from scipy import stats
 
+# TODO regarding the concern that there will be no matches: Since there is a skills-hierarchy and skill_groups, can I first find "more coarse" skills and then compare?
+# TODO discuss skills entity structure that is being pulled from conversation
+## What I will get is an array with uuids BUT
+# TODO also ask which uuids I should best compare, since I can cleanly choose which appear in the jobs_vector -- the latest or the uuid history?
+# [TODO Ask how difficult to set up RAG for LLM layer of skills extraction from job ads]
+
 # Define the base path for the data files.
 # Using os.path.join ensures compatibility across different operating systems.
 base_path = os.path.join("C:", os.sep, "Users", "jasmi", "OneDrive - Nexus365", 
@@ -10,18 +16,16 @@ base_path = os.path.join("C:", os.sep, "Users", "jasmi", "OneDrive - Nexus365",
                          "Ongoing", "Compass", "data", "pre_study")
 
 # Define the full paths for each of the CSV files.
-file_path_skills_others = os.path.join(base_path, "dummy_data_skills_temporary.csv")
+file_path_skills_others = os.path.join(base_path, "dummy_data_skills_temporary.csv") # instead of csv, can I just take it from the current users of compass on harambee deployment; then always randomly choose 100; at ground 0 say "if I don't have enough users here, start picking from..." pilot one's as "baseline" as csv; note that this is a list of lists
 #file_path_skills = os.path.join(base_path, "dummy_data_skills_others.csv")
 file_path_baseline = os.path.join(base_path, "dummy_data_baseline_beliefs.csv")
-file_path_jobs = os.path.join(base_path, "dummy_data_jobs.csv")
+file_path_jobs = os.path.join(base_path, "dummy_data_jobs.csv") 
 
 df_skills_others = pd.read_csv(file_path_skills_others)
 df_bl = pd.read_csv(file_path_baseline)
 df_jobs = pd.read_csv(file_path_jobs)
 
 # Define the column structure for the new DataFrame.
-# TODO discuss skills entity structure that is being pulled from conversation
-# TODO also ask which uuids I should best compare, since I can cleanly choose which appear in the jobs_vector -- the latest or the uuid history?
 columns = [
     "harambee_id",
     "uuid_1",
@@ -47,7 +51,7 @@ df_current_person_skills = pd.DataFrame(current_person_skills)
 
 # Identify all columns in each DataFrame that contain "uuid" in their name.
 uuid_cols_jobs = [col for col in df_jobs.columns if 'uuid' in col]
-uuid_cols_skills = [col for col in df_current_person_skills.columns if 'uuid' in col]
+uuid_cols_skills = [col for col in df_current_person_skills.columns if 'uuid' in col] # THIS WILL ALREADY BE INPUT INTO FUNCTION
 
 # Get the set of unique skill UUIDs for the current person.
 # Using a set provides fast lookups. .values.flatten() gets all values from the uuid columns.
@@ -73,7 +77,6 @@ def calculate_overlap_score(row):
         return 0.0
         
     # Calculate the final score.
-    # TODO consider weighting by taxonomy centrality to stop generic skills (e.g., “communication”) swamping the score.
     score = len(overlapping_uuids) / len(uuid_cols_jobs)
     return score
 
