@@ -3,11 +3,13 @@ import os
 import random
 from scipy import stats
 
+
 # TODO regarding the concern that there will be no matches: Since there is a skills-hierarchy and skill_groups, can I first find "more coarse" skills and then compare?
 # TODO discuss skills entity structure that is being pulled from conversation
 ## What I will get is an array with uuids BUT
 # TODO also ask which uuids I should best compare, since I can cleanly choose which appear in the jobs_vector -- the latest or the uuid history?
 # [TODO Ask how difficult to set up RAG for LLM layer of skills extraction from job ads]
+# TODO: Bring LLM output into correct format for this script to work
 
 # Define the base path for the data files.
 # Using os.path.join ensures compatibility across different operating systems.

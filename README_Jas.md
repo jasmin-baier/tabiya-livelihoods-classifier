@@ -2,12 +2,12 @@
 # FIRST: Maker sure we are in the correct working directory
 Set-Location "C:\Users\jasmi\Documents\GitHub\tabiya-livelihoods-classifier"
 
-# STEP 1: Get new jobs via Harambee API and update jobs database
-jobs_API_and_formatting.py
-
-# STEP 2: Once opened VS Code, open Terminal (View > Terminal or CTRL + ~) and run:
+# STEP 1: Once opened VS Code, open Terminal (View > Terminal or CTRL + ~) and run:
 .\classifier_setup.ps1
 # That should activate virtual environment which I set up previously as per https://github.com/tabiya-tech/tabiya-livelihoods-classifier/blob/main/README.md#set-up-virtualenv
+
+# STEP 2: Get new jobs via Harambee API and update jobs database
+jobs_API_and_formatting.py
 
 # STEP 3: View > Command Palette > Python: Select interpreter > CHOOSE VENV
 
