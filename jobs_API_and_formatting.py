@@ -5,6 +5,7 @@ Date: 2025-04-30
 """
 
 # TODO: This was translated from R, need to quality check and ensure it works as intended.
+# TODO: Double double check that I am not adding duplicates -- if a job with an existing group+reference ID was updated only use the new one (wouldn't appear as duplicate by checking the whole row since maybe dates were extended). In raw harambee jobs file check how unique the IDs are, e.g. can there be a job with the same ID in two locations?
 
 import os
 import json

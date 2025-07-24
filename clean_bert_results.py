@@ -7,6 +7,16 @@ from typing import List, Dict, Any
 from pathlib import Path
 import re
 
+# TODO: Bert is inconsistent in extracting labels or uuids, so we need to handle both cases
+# TODO: opportunity DB should also have: when posted/when ends + and indicator if at date = today it is still relevant; or if it has been deleted (then also not relevant) --> for study consider keeping all relevant all the time to have larger number of jobs / have function that ensures there are at least 1000 jobs to compare to
+# TODO: ReferenceNumbers are not unique, I always need both GroupSourceID and ReferenceNumber
+# TODO remove any occupation classifiers from skills, and any skills classifiers from occupation
+# TODO output doesn't yet actually have all the columns I want
+# TODO often the mapping leads to UNKNOWN_uuid -- maybe an issue with historic?
+# TODO: if it mentions matric, manually add it as requirement, bert likely won't understand
+# TODO I have to map requirements to qualifications, but our taxonomy only has skills and occupations? Couldn't find secondary school certificate for example
+# TODO: How can I tell the system that if someone has upper secondary qualification, they also have all of the qualifications below
+
 # ── LOAD MAPPINGS ────────────────────────────────────────────────────────────
 taxonomy_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/Tabiya ESCO adapted")
 OCC_MAP_PATH = taxonomy_dir / "occupations.csv"
@@ -168,10 +178,27 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
     for index, row in df.iterrows():
         try:
             # Extract and clean the data
-            job_id = str(row['ReferenceNumber'])
+            # TODO consider making this more efficient at some point
+            opportunity_group_id = str(row['GroupSourceID'])
+            opportunity_ref_id = str(row['ReferenceNumber'])
             job_title = str(row['job_title']).strip()
             job_description = str(row['job_description']).strip()
             job_requirements = str(row['job_requirements']).strip()
+            full_details = str(row['full_details']).strip()
+            company_name = str(row['company_name']).strip()
+            contract_type = str(row['contract_type']).strip()
+            date_posted = str(row['date_posted']).strip()
+            date_closing = str(row['date_closing']).strip()
+            certification_type = str(row['certification_type']).strip()
+            city = str(row['city']).strip()
+            province = str(row['province']).strip()
+            latitude = str(row['latitude']).strip()
+            longitude = str(row['longitude']).strip()
+            salary_type = str(row['salary_type']).strip()
+            salary = str(row['salary']).strip()
+            opportunity_duration = str(row['opportunity_duration']).strip()
+            is_online = str(row['is_online']).strip()
+            opportunity_url = str(row['opportunity_url']).strip()
             
             # Parse the complex potential_occupations field
             occupations = parse_potential_occupations(row['potential_occupations'])
@@ -183,7 +210,7 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
             if has_skills_column and pd.notna(row['potential_skills']):
                 skills = parse_potential_skills(row['potential_skills'])
             elif has_skills_column:
-                print(f"  ⚠ No skills data for job {job_id}")
+                print(f"  ⚠ No skills data for job {opportunity_group_id} - {opportunity_ref_id}")
             # Remove duplicates
             skills = list(dict.fromkeys(skills))
 
@@ -198,12 +225,28 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
             
             # Create the job data entry
             job_entry = {
-                "job_id": job_id,
+                "opportunity_group_id" : opportunity_group_id,
+                "opportunity_ref_id" : opportunity_ref_id,
                 "job_title": job_title,
                 "job_description": job_description,
                 "job_requirements": job_requirements,
+                "full_details": full_details,
                 "potential_occupations_uuids": occupations,
-                "potential_occupations": occupation_labels 
+                "potential_occupations": occupation_labels,
+                "company_name": company_name,
+                "contract_type": contract_type,
+                "date_posted": date_posted,
+                "date_closing": date_closing,
+                "certification_type" : certification_type,
+                "city" : city,
+                "province" : province,
+                "latitude" : latitude,
+                "longitude" : longitude,
+                "salary_type" : salary_type,
+                "salary" : salary,
+                "opportunity_duration" : opportunity_duration,
+                "is_online" : is_online,
+                "opportunity_url" : opportunity_url
             }
             
             # ADDED: Include skills in the output if available
@@ -212,7 +255,7 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
                 job_entry["potential_skills"] = skill_labels
             
             job_data_list.append(job_entry)
-            print(f"✓ Processed job {job_id}: {job_title}")
+            print(f"✓ Processed job {opportunity_group_id} - {opportunity_ref_id}: {job_title}")
             print(f"  Found {len(occupations)} occupations: {occupations}")
             if has_skills_column:
                 print(f"  Found {len(skills)} skills: {skills}")
@@ -220,7 +263,8 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
         except Exception as e:
             error_info = {
                 'row_index': index,
-                'job_id': row.get('ReferenceNumber', 'unknown'),
+                'opportunity_group_id': row.get('GroupSourceID', 'unknown'),
+                'opportunity_ref_id': row.get('ReferenceNumber', 'unknown'),
                 'error': str(e)
             }
             failed_parsing.append(error_info)
@@ -248,7 +292,7 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
     if failed_parsing:
         print(f"\nFailed rows:")
         for failure in failed_parsing:
-            print(f"  - Row {failure['row_index']} (ID: {failure['job_id']}): {failure['error']}")
+            print(f"  - Row {failure['row_index']} (GroupID: {failure['opportunity_group_id']}, ReferenceNumber: {failure['opportunity_ref_id']}): {failure['error']}")
     
     print(f"{'='*60}")
     
@@ -301,7 +345,8 @@ if __name__ == "__main__":
     base_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study")
 
     # File paths
-    csv_file_path = base_dir / "2025-07-21_BERT_extracted_occupations_skills_uuid.csv"  # Your CSV file path
+    #csv_file_path = base_dir / "2025-07-21_BERT_extracted_occupations_skills_uuid.csv"  # Your CSV file path
+    csv_file_path = base_dir / "bert_uuid_subset_temporary.csv"  # Your CSV file path    
     output_json_path = base_dir / "bert_cleaned.json"  # Output JSON file
   
     # First, preview the transformation

@@ -2,7 +2,7 @@ import csv
 import pandas as pd
 from inference.linker import EntityLinker
 
-# TODO: Currently returns a LOT of skills (around 500 per job using full job description) -- probably overkill
+# TODO: Currently returns a LOT of skills (around 500 per job using full job description) -- probably overkill; try 20-25 per token instead of 100?
 # TODO: I am using extracted_skills1 in other files now. Better might be to merge extracted_skills2 & extracted_requirements
 
 # Initialize the entity linker
@@ -39,7 +39,7 @@ with open(filepath_write, mode="w", newline="", encoding='utf-8') as file:
         writer.writerow([snippet.GroupSourceID, snippet.ReferenceNumber, snippet.job_title, snippet.job_description, snippet.job_requirements, snippet.full_details, extracted_occ, extracted_skills1, extracted_skills2, extracted_requirements])
 
 # Do the same with labels mostly for exploration
-pipeline_skills = EntityLinker(k=100, output_format='preffered_label')
+pipeline_skills = EntityLinker(k=25, output_format='preffered_label')
 
 filepath_write = basedir + "data/pre_study/BERT_extracted_occupations_skills_labels" + ".csv"
 with open(filepath_write, mode="w", newline="", encoding='utf-8') as file:

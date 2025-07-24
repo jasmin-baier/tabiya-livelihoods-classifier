@@ -10,6 +10,9 @@ from scipy import stats
 # TODO also ask which uuids I should best compare, since I can cleanly choose which appear in the jobs_vector -- the latest or the uuid history?
 # [TODO Ask how difficult to set up RAG for LLM layer of skills extraction from job ads]
 # TODO: Bring LLM output into correct format for this script to work
+# TODO compare to random 100, not all people
+# TODO: re naming convention: call whichever belief I use in the end just "prior_belief"
+# TODO: maybe add in choose which jobs, i.e. only newest or only where active=True, EXCEPT have minimum of ~500-1000
 
 # Define the base path for the data files.
 # Using os.path.join ensures compatibility across different operating systems.
@@ -62,6 +65,9 @@ if not df_current_person_skills.empty:
 else:
     person_skill_uuids = set() # TODO how can I robustly ensure that this is not empty?
 
+# TODO: make sure that things don't happen outside of function; each function should have specific input, and should only access things that are part of its input
+# TODO: function should not worry about structure of its input, but only what it's responsible for, so the input should already be in correct structure
+
 # Define a function to calculate the overlap for a single row from df_jobs.
 def calculate_overlap_score(row):
     """
@@ -84,6 +90,9 @@ def calculate_overlap_score(row):
 
 # Apply the function to each row in df_jobs to compute the score.
 # The result is stored in a new 'overlap_score' column.
+# TODO problem here is that this is also dependent on the data structure, so should change that too
+# TODO consider doing all of this without pandas; separate getting data into write structure into separate file, here ONLY have the calculation
+# TODO vectorize instead of loop
 df_jobs['overlap_score'] = df_jobs.apply(calculate_overlap_score, axis=1)
 
 # Offline check while writing script: Display the head of the jobs DataFrame with the new score column to verify.
@@ -92,6 +101,7 @@ df_jobs['overlap_score'] = df_jobs.apply(calculate_overlap_score, axis=1)
 #print(df_jobs[display_cols].head())
 
 # Find for how many jobs the overlap score is above 0.5
+# TODO have a define threshold rather than hardcode the number
 num_jobs_above_threshold = df_jobs[df_jobs['overlap_score'] > 0.5].shape[0]
 # Get percentage of jobs with overlap score above 0.5
 percentage_above_threshold = (num_jobs_above_threshold / df_jobs.shape[0]) * 100 # A number between 0 and 100
