@@ -15,11 +15,14 @@ jobs_API_and_formatting.py
 python entity_extraction_loop.py
 # TODO must change to batching in system, i.e. so that it only re-analyzes new entries
 
-# Once done, clean the output using the cleaning script
+# STEP 5: Once done, clean the output using the cleaning script
 clean_bert_results.py
 
-# Then: Give to LLMs (script to be written)
-LLM_pick_skills.py
+# STEP 6: Then: Give to LLMs (script to be written)
+LLM_pick_skills_full_details.py
 
-# Finally, run computation
+# STEP 7: Reshape LLM output and merge opportunity information back in
+clean_LLM_create_opp-db.py
+
+# Finally, run computation (will actually be one on cloud, so this file is just for testing)
 match_skills_compute.py

@@ -8,21 +8,20 @@ from pathlib import Path
 import re
 
 # TODO: Now still using extracted_skills1, check if requirements are just a subset of skills 1; if yes OR more comprehensive, use extracted_skills2 & skill_requirements separately
-# TODO: Bert is inconsistent in extracting labels or uuids, so we need to handle both cases
+# TODO I have currently commented out all extra fields, in two places (e.g. date_posted etc) --> change once I decide how to pull these fields through the whole pipeline
 # TODO: opportunity DB should also have: when posted/when ends + and indicator if at date = today it is still relevant; or if it has been deleted (then also not relevant) --> for study consider keeping all relevant all the time to have larger number of jobs / have function that ensures there are at least 1000 jobs to compare to
 # TODO: ReferenceNumbers are not unique, I always need both GroupSourceID and ReferenceNumber
 # TODO output doesn't yet actually have all the columns I want
-# TODO often the mapping leads to UNKNOWN_uuid -- maybe an issue with historic?
 
 # TODO Note that BERT taxonomy files don't have uuid history, so need to check if uuids will match correctly with Compass identified uuids
 
-# TODO think about qualifications and job_requirements
+# TODO think about qualifications and opportunity_requirements
 # Current judgement: Probably stay away from it, and only talk about skills matches, clearly state that it doesn't take qualifications into account
 # Considerations if I did want to include qualifications
 # if it mentions matric, manually add it as requirement, bert likely won't understand
 # I have to map requirements to qualifications, but our taxonomy only has skills and occupations? Couldn't find secondary school certificate for example
 # How can I tell the system that if someone has upper secondary qualification, they also have all of the qualifications below
-# possibly have to add South African qulifications manually, similar to matric bit in; job_requirements can get quite complicated though (include employment status, criminal record, driver's license, own car, matric only a few months go etc.)
+# possibly have to add South African qulifications manually, similar to matric bit in; opportunity_requirements can get quite complicated though (include employment status, criminal record, driver's license, own car, matric only a few months go etc.)
 # South African NQF doesn't perfectly map onto EQF, since EQF only has 8 levels: https://www.saqa.org.za/wp-content/uploads/2023/02/National-Qualifications-Framework.pdf
 
 # ── LOAD MAPPINGS ────────────────────────────────────────────────────────────
@@ -227,24 +226,24 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
             # TODO consider making this more efficient at some point
             opportunity_group_id = str(row['GroupSourceID'])
             opportunity_ref_id = str(row['ReferenceNumber'])
-            job_title = str(row['job_title']).strip()
-            job_description = str(row['job_description']).strip()
-            job_requirements = str(row['job_requirements']).strip()
+            opportunity_title = str(row['opportunity_title']).strip()
+            opportunity_description = str(row['opportunity_description']).strip()
+            opportunity_requirements = str(row['opportunity_requirements']).strip()
             full_details = str(row['full_details']).strip()
-            company_name = str(row['company_name']).strip()
-            contract_type = str(row['contract_type']).strip()
-            date_posted = str(row['date_posted']).strip()
-            date_closing = str(row['date_closing']).strip()
-            certification_type = str(row['certification_type']).strip()
-            city = str(row['city']).strip()
-            province = str(row['province']).strip()
-            latitude = str(row['latitude']).strip()
-            longitude = str(row['longitude']).strip()
-            salary_type = str(row['salary_type']).strip()
-            salary = str(row['salary']).strip()
-            opportunity_duration = str(row['opportunity_duration']).strip()
-            is_online = str(row['is_online']).strip()
-            opportunity_url = str(row['opportunity_url']).strip()
+            #company_name = str(row['company_name']).strip()
+            #contract_type = str(row['contract_type']).strip()
+            #date_posted = str(row['date_posted']).strip()
+            #date_closing = str(row['date_closing']).strip()
+            #certification_type = str(row['certification_type']).strip()
+            #city = str(row['city']).strip()
+            #province = str(row['province']).strip()
+            #latitude = str(row['latitude']).strip()
+            #longitude = str(row['longitude']).strip()
+            #salary_type = str(row['salary_type']).strip()
+            #salary = str(row['salary']).strip()
+            #opportunity_duration = str(row['opportunity_duration']).strip()
+            #is_online = str(row['is_online']).strip()
+            #opportunity_url = str(row['opportunity_url']).strip()
             
             # --- PARSE EACH COLUMN ---
             # Parse occupations
@@ -290,9 +289,9 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
             job_entry = {
                 "opportunity_group_id" : opportunity_group_id,
                 "opportunity_ref_id" : opportunity_ref_id,
-                "job_title": job_title,
-                "job_description": job_description,
-                "job_requirements": job_requirements,
+                "opportunity_title": opportunity_title,
+                "opportunity_description": opportunity_description,
+                "opportunity_requirements": opportunity_requirements,
                 "full_details": full_details,
                 "potential_occupations_uuids": occupations,
                 "potential_occupations": occupation_labels,
@@ -300,24 +299,24 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
                 "potential_skills": skill_labels,
                 "potential_skill_requirements_uuids": skill_requirements,
                 "potential_skill_requirements": skill_requirements_labels,
-                "company_name": company_name,
-                "contract_type": contract_type,
-                "date_posted": date_posted,
-                "date_closing": date_closing,
-                "certification_type" : certification_type,
-                "city" : city,
-                "province" : province,
-                "latitude" : latitude,
-                "longitude" : longitude,
-                "salary_type" : salary_type,
-                "salary" : salary,
-                "opportunity_duration" : opportunity_duration,
-                "is_online" : is_online,
-                "opportunity_url" : opportunity_url
+                #"company_name": company_name,
+                #"contract_type": contract_type,
+                #"date_posted": date_posted,
+                #"date_closing": date_closing,
+                #"certification_type" : certification_type,
+                #"city" : city,
+                #"province" : province,
+                #"latitude" : latitude,
+                #"longitude" : longitude,
+                #"salary_type" : salary_type,
+                #"salary" : salary,
+                #"opportunity_duration" : opportunity_duration,
+                #"is_online" : is_online,
+                #"opportunity_url" : opportunity_url
             }
             
             job_data_list.append(job_entry)
-            print(f"✓ Processed job {opportunity_group_id} - {opportunity_ref_id}: {job_title}")
+            print(f"✓ Processed job {opportunity_group_id} - {opportunity_ref_id}: {opportunity_title}")
             print(f"  Found {len(occupations)} occupations: {occupations}")
             if has_skills_column:
                 print(f"  Found {len(skills)} skills: {skills}")
@@ -378,9 +377,9 @@ def preview_transformation(csv_file_path: str, num_rows: int = 3):
             row = df.iloc[i]
             print(f"\nROW {i+1}:")
             print(f"Job ID: {row['ReferenceNumber']}")
-            print(f"Job Title: {row['job_title']}")
-            print(f"Job Description: {row['job_description'][:100]}...")
-            print(f"Job Requirements: {row['job_requirements'][:100]}...")
+            print(f"Job Title: {row['opportunity_title']}")
+            print(f"Job Description: {row['opportunity_description'][:100]}...")
+            print(f"Job Requirements: {row['opportunity_requirements'][:100]}...")
             
             # Parse occupations
             occupations = parse_potential_occupations(row['potential_occupations'])
@@ -407,8 +406,7 @@ if __name__ == "__main__":
     base_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study")
 
     # File paths
-    csv_file_path = base_dir / "2025-07-27_BERT_extracted_occupations_skills_uuid.csv"  # Your CSV file path
-    #csv_file_path = base_dir / "bert_uuid_subset_temporary.csv"  # Your CSV file path    
+    csv_file_path = base_dir / "2025-07-27_BERT_extracted_occupations_skills_uuid.csv"  # Your CSV file path  
     output_json_path = base_dir / "bert_cleaned.json"  # Output JSON file
   
     # First, preview the transformation

@@ -154,12 +154,12 @@ def process_job_list(job_list):
             salary = float(salary) if salary else None
         
         job_data = {
-            'GroupSourceID': safe_extract(item, 'GroupSourceID'),
-            'ReferenceNumber': ref_num,
+            'opportunity_group_id': safe_extract(item, 'GroupSourceID'),
+            'opportunity_ref_id': ref_num,
             'full_details': '; '.join(details_parts),
-            'job_title': safe_extract(item, 'JobTitle'),
-            'job_description': safe_extract(item, 'RoleDescription'),
-            'job_requirements': safe_extract(item, 'RoleRequirements'),
+            'opportunity_title': safe_extract(item, 'JobTitle'),
+            'opportunity_description': safe_extract(item, 'RoleDescription'),
+            'opportunity_requirements': safe_extract(item, 'RoleRequirements'),
             'company_name': safe_extract(item, 'CompanyName'),
             'contract_type': safe_extract(item, 'ContractType'),
             'date_posted': safe_extract(item, 'DatePosted'),
@@ -240,14 +240,29 @@ def clean_html_text(text):
         return str(text) if text is not None else ""
 
 # Apply HTML cleaning to text columns
-text_columns = ['full_details', 'job_description', 'job_requirements']
+text_columns = ['full_details', 'opportunity_description', 'opportunity_requirements']
 for col in text_columns:
     if col in df_clean.columns:
         df_clean[col] = df_clean[col].apply(clean_html_text)
 
 # Fill NaN values in text columns with empty strings
-df_clean['job_description'] = df_clean['job_description'].fillna('')
-df_clean['job_requirements'] = df_clean['job_requirements'].fillna('')
+df_clean['opportunity_description'] = df_clean['opportunity_description'].fillna('')
+df_clean['opportunity_requirements'] = df_clean['opportunity_requirements'].fillna('')
+
+# Remove duplicates
+df_clean = df_clean.drop_duplicates()
+## Create a score based on variables I care about, keep only later/longer entries
+df_clean["composite_score"] = (
+    pd.to_datetime(df_clean["date_closing"]).astype("int64") // 1_000_000 * 1e3 +  # prioritize closing date
+    pd.to_datetime(df_clean["date_posted"]).astype("int64") // 1_000_000 * 1e3 +  # then posted date
+    df_clean["opportunity_description"].str.len().fillna(0) +                    # longer descriptions
+    df_clean["full_details"].str.len().fillna(0)                                 # longer full details
+)
+df_clean = (
+    df_clean.sort_values("composite_score", ascending=False)
+            .drop_duplicates(subset=["opportunity_group_id", "opportunity_ref_id", "opportunity_title"])
+            .reset_index(drop=True)
+)
 
 # Save clean dataset
 clean_file = os.path.join(basedir, "data/pre_study/harambee_jobs_clean.csv")
