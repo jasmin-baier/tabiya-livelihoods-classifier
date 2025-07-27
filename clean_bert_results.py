@@ -7,20 +7,29 @@ from typing import List, Dict, Any
 from pathlib import Path
 import re
 
+# TODO: Now still using extracted_skills1, check if requirements are just a subset of skills 1; if yes OR more comprehensive, use extracted_skills2 & skill_requirements separately
 # TODO: Bert is inconsistent in extracting labels or uuids, so we need to handle both cases
 # TODO: opportunity DB should also have: when posted/when ends + and indicator if at date = today it is still relevant; or if it has been deleted (then also not relevant) --> for study consider keeping all relevant all the time to have larger number of jobs / have function that ensures there are at least 1000 jobs to compare to
 # TODO: ReferenceNumbers are not unique, I always need both GroupSourceID and ReferenceNumber
-# TODO remove any occupation classifiers from skills, and any skills classifiers from occupation
 # TODO output doesn't yet actually have all the columns I want
 # TODO often the mapping leads to UNKNOWN_uuid -- maybe an issue with historic?
-# TODO: if it mentions matric, manually add it as requirement, bert likely won't understand
-# TODO I have to map requirements to qualifications, but our taxonomy only has skills and occupations? Couldn't find secondary school certificate for example
-# TODO: How can I tell the system that if someone has upper secondary qualification, they also have all of the qualifications below
+
+# TODO Note that BERT taxonomy files don't have uuid history, so need to check if uuids will match correctly with Compass identified uuids
+
+# TODO think about qualifications and job_requirements
+# Current judgement: Probably stay away from it, and only talk about skills matches, clearly state that it doesn't take qualifications into account
+# Considerations if I did want to include qualifications
+# if it mentions matric, manually add it as requirement, bert likely won't understand
+# I have to map requirements to qualifications, but our taxonomy only has skills and occupations? Couldn't find secondary school certificate for example
+# How can I tell the system that if someone has upper secondary qualification, they also have all of the qualifications below
+# possibly have to add South African qulifications manually, similar to matric bit in; job_requirements can get quite complicated though (include employment status, criminal record, driver's license, own car, matric only a few months go etc.)
+# South African NQF doesn't perfectly map onto EQF, since EQF only has 8 levels: https://www.saqa.org.za/wp-content/uploads/2023/02/National-Qualifications-Framework.pdf
 
 # ── LOAD MAPPINGS ────────────────────────────────────────────────────────────
-taxonomy_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/Tabiya ESCO adapted")
-OCC_MAP_PATH = taxonomy_dir / "occupations.csv"
+taxonomy_dir = Path("C:/Users/jasmi/Documents/GitHub/tabiya-livelihoods-classifier/inference/files")
+OCC_MAP_PATH = taxonomy_dir / "occupations_augmented.csv"
 SKILL_MAP_PATH = taxonomy_dir / "skills.csv"
+#QUAL_MAP_PATH = taxonomy_dir / "qualifications.csv" # decided not to use qualifications for now + anyway this doesn't include South African ones
 
 def load_id_label_mapping(csv_path: Path) -> dict[str, str]:
     """
@@ -29,25 +38,72 @@ def load_id_label_mapping(csv_path: Path) -> dict[str, str]:
     """
     df = pd.read_csv(csv_path, dtype=str).fillna("")
 
+    # --- Dynamically find the label / id column ---
+    possible_label_cols = ["PREFERREDLABEL", "skills", "preffered_label"] # nNote: I know that "preffered_label" is incorrect spelling, but this is what it is in BERT taxonomy
+    label_col_name = None
+    for col in possible_label_cols:
+        if col in df.columns:
+            label_col_name = col
+            print(f"Found label column '{label_col_name}' in {csv_path.name}")
+            break  # Stop once a valid column is found
+
+    possible_id_cols = ["ID", "uuid"]
+    id_col_name = None
+    for col in possible_id_cols:
+        if col in df.columns:
+            id_col_name = col
+            print(f"Found id column '{id_col_name}' in {csv_path.name}")
+            break  # Stop once a valid column is found
+
+    # Raise an error if no suitable label column is found
+    if label_col_name is None:
+        raise ValueError(
+            f"Could not find a label column in {csv_path.name}. "
+            f"Expected one of: {possible_label_cols}"
+        )
+    
+    if id_col_name is None:
+        raise ValueError(
+            f"Could not find a label column in {csv_path.name}. "
+            f"Expected one of: {possible_id_cols}"
+        )
+
+    # No map to correct columns
     mapping: dict[str, str] = {}
     for _, row in df.iterrows():
-        label = row["PREFERREDLABEL"].strip()
+        label = row[label_col_name].strip()
 
         # primary ID
-        primary_id = row["ID"].strip()
+        primary_id = row[id_col_name].strip()
         if primary_id:
             mapping[primary_id] = label
 
-        # any UUIDs in UUIDHISTORY (can be 'uuid1;uuid2 uuid3,…')
-        for uuid in re.split(r"[;,|\s]+", row["UUIDHISTORY"]):
-            uuid = uuid.strip()
-            if uuid:
-                mapping[uuid] = label
+        # any UUIDs in UUIDHISTORY (can be 'uuid1;uuid2 uuid3,…') -- BERT taxonomy files don't have uuid history
+        #for uuid in re.split(r"[;,|\s]+", row["UUIDHISTORY"]):
+        #    uuid = uuid.strip()
+        #    if uuid:
+        #        mapping[uuid] = label
 
     return mapping
 
+def load_valid_uuids(csv_path: Path, column_name: str = "uuid") -> set:
+    """Loads a specific column from a CSV into a set for fast lookups."""
+    try:
+        df = pd.read_csv(csv_path, dtype=str, usecols=[column_name])
+        return set(df[column_name].dropna())
+    except Exception as e:
+        print(f"Error loading valid UUIDs from {csv_path}: {e}")
+        return set()
+
 occ_id2label   = load_id_label_mapping(OCC_MAP_PATH)
 skill_id2label = load_id_label_mapping(SKILL_MAP_PATH)
+
+# Load the valid UUIDs into sets for efficient validation of parsed uuids
+print("\nLoading valid UUIDs for filtering...")
+valid_occupation_uuids = load_valid_uuids(OCC_MAP_PATH, column_name="uuid")
+valid_skill_uuids      = load_valid_uuids(SKILL_MAP_PATH, column_name="uuid")
+print(f"Found {len(valid_occupation_uuids)} valid occupation UUIDs.")
+print(f"Found {len(valid_skill_uuids)} valid skill UUIDs.")
 
 # ── PARSE FUNCTIONS ──────────────────────────────────────────────────────────
 def _normalise_retrieved(value: Any) -> List[str]:
@@ -92,39 +148,26 @@ def _extract_retrieved_list(parsed_item: Any) -> List[str]:
     raw = parsed_item.get("retrieved")
     return _normalise_retrieved(raw)
 
-def parse_potential_occupations(cell) -> List[str]:
+def parse_extracted_items(cell: Any, data_type: str) -> List[str]:
+    """
+    Parses a cell that may contain a JSON/literal list of extracted items.
+    Handles complex nested structures from BERT output.
+    """
     parsed = _safe_load_literal(cell)
 
-    # Try regex fallback first if parsing failed:
     if isinstance(parsed, str):
-        return extract_fallback_tokens(parsed, "occupations")
+        # The fallback can use the data_type for better error messages
+        return extract_fallback_tokens(parsed, data_type)
 
     seen: set[str] = set()
     out:  list[str] = []
 
     if isinstance(parsed, list):
         for item in parsed:
-            for occ in _extract_retrieved_list(item):
-                if occ not in seen:       # O(1) lookup
-                    seen.add(occ)
-                    out.append(occ)       # keep original order
-    return out
-
-def parse_potential_skills(cell) -> List[str]:
-    parsed = _safe_load_literal(cell)
-
-    if isinstance(parsed, str):
-        return extract_fallback_tokens(parsed, "skills")
-
-    seen: set[str] = set()
-    out:  list[str] = []
-
-    if isinstance(parsed, list):
-        for item in parsed:
-            for skill in _extract_retrieved_list(item):
-                if skill not in seen:
-                    seen.add(skill)
-                    out.append(skill)
+            for extracted_item in _extract_retrieved_list(item):
+                if extracted_item not in seen:
+                    seen.add(extracted_item)
+                    out.append(extracted_item)
     return out
 
 def extract_fallback_tokens(retrieved_string: str, data_type: str) -> List[str]:
@@ -147,6 +190,7 @@ def extract_fallback_tokens(retrieved_string: str, data_type: str) -> List[str]:
     
     return retrieved if retrieved else [f"Unable to parse {data_type}"]
 
+# ── PRIMARY FUNCTION putting it all together ──────────────────────────────────────────────────────────
 def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List[Dict[str, Any]]:
     """
     Transform the CSV data into the format expected by the job processing code
@@ -163,14 +207,16 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
     
     # First, rename the columns to match the expected format in later LLM reranking
     df.rename(columns={'extracted_occupation': 'potential_occupations'}, inplace=True)
-    df.rename(columns={'extracted_skills1': 'potential_skills'}, inplace=True)
+    df.rename(columns={'extracted_skills2': 'potential_skills'}, inplace=True)
+    df.rename(columns={'extracted_requirements': 'potential_skill_requirements'}, inplace=True)
 
     # Display column names for verification
     print(f"CSV columns: {list(df.columns)}")
     
     # Check if potential_skills column exists
+    has_occupations_column = 'potential_occupations' in df.columns
     has_skills_column = 'potential_skills' in df.columns
-    print(f"Has potential_skills column: {has_skills_column}")
+    has_skill_requirements_column = 'potential_skill_requirements' in df.columns
     
     job_data_list = []
     failed_parsing = []
@@ -200,21 +246,34 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
             is_online = str(row['is_online']).strip()
             opportunity_url = str(row['opportunity_url']).strip()
             
-            # Parse the complex potential_occupations field
-            occupations = parse_potential_occupations(row['potential_occupations'])
+            # --- PARSE EACH COLUMN ---
+            # Parse occupations
+            occupations = []
+            if has_occupations_column and pd.notna(row['potential_occupations']):
+                occupations = parse_extracted_items(row['potential_occupations'], "occupations")
             # Remove duplicates
-            occupations = list(dict.fromkeys(occupations))  # preserves order
-            
-            # ADDED: Parse potential_skills if the column exists
+            occupations = list(dict.fromkeys(occupations))
+
+            # Parse skills
             skills = []
             if has_skills_column and pd.notna(row['potential_skills']):
-                skills = parse_potential_skills(row['potential_skills'])
-            elif has_skills_column:
-                print(f"  ⚠ No skills data for job {opportunity_group_id} - {opportunity_ref_id}")
+                skills = parse_extracted_items(row['potential_skills'], "skills")
             # Remove duplicates
             skills = list(dict.fromkeys(skills))
 
-            # ── map IDs → preferred labels ──────────────────►
+            # Parse skill requirements
+            skill_requirements = []
+            if has_skill_requirements_column and pd.notna(row['potential_skill_requirements']):
+                skill_requirements = parse_extracted_items(row['potential_skill_requirements'], "skill requirements")
+            # Remove duplicates
+            skill_requirements = list(dict.fromkeys(skill_requirements))
+
+            # --- FILTER - Keep only the UUIDs that exist in the respective taxonomy files ---
+            occupations = [occ for occ in occupations if occ in valid_occupation_uuids]
+            skills = [s for s in skills if s in valid_skill_uuids]
+            skill_requirements = [sr for sr in skill_requirements if sr in valid_skill_uuids]
+
+            # --- map IDs → preferred labels ---
             occupation_labels = list(dict.fromkeys(
             occ_id2label.get(occ, f"UNKNOWN_{occ}") for occ in occupations
             ))
@@ -222,6 +281,10 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
             skill_labels = list(dict.fromkeys(
             skill_id2label.get(sk, f"UNKNOWN_{sk}") for sk in skills
             ))
+
+            skill_requirements_labels = list(dict.fromkeys(
+            skill_id2label.get(skrq, f"UNKNOWN_{skrq}") for skrq in skill_requirements
+            ))            
             
             # Create the job data entry
             job_entry = {
@@ -233,6 +296,10 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
                 "full_details": full_details,
                 "potential_occupations_uuids": occupations,
                 "potential_occupations": occupation_labels,
+                "potential_skills_uuids": skills,
+                "potential_skills": skill_labels,
+                "potential_skill_requirements_uuids": skill_requirements,
+                "potential_skill_requirements": skill_requirements_labels,
                 "company_name": company_name,
                 "contract_type": contract_type,
                 "date_posted": date_posted,
@@ -248,11 +315,6 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
                 "is_online" : is_online,
                 "opportunity_url" : opportunity_url
             }
-            
-            # ADDED: Include skills in the output if available
-            if has_skills_column:
-                job_entry["potential_skills_uuids"] = skills
-                job_entry["potential_skills"] = skill_labels
             
             job_data_list.append(job_entry)
             print(f"✓ Processed job {opportunity_group_id} - {opportunity_ref_id}: {job_title}")
@@ -345,8 +407,8 @@ if __name__ == "__main__":
     base_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study")
 
     # File paths
-    #csv_file_path = base_dir / "2025-07-21_BERT_extracted_occupations_skills_uuid.csv"  # Your CSV file path
-    csv_file_path = base_dir / "bert_uuid_subset_temporary.csv"  # Your CSV file path    
+    csv_file_path = base_dir / "2025-07-27_BERT_extracted_occupations_skills_uuid.csv"  # Your CSV file path
+    #csv_file_path = base_dir / "bert_uuid_subset_temporary.csv"  # Your CSV file path    
     output_json_path = base_dir / "bert_cleaned.json"  # Output JSON file
   
     # First, preview the transformation

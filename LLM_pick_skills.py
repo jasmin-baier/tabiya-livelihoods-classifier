@@ -5,6 +5,7 @@ import base64
 import os
 from datetime import datetime
 
+# TODO give it skill requirements separately from skills or paste together?
 # TODO: Think about whether there is an advantage in giving LLM full details instead -- has company name and salary etc but then harder to save together with description in output
 # TODO: There are quite a few cases where Bert didn't extract any occupations. Probably this is correct (they seem to be mostly trainings) but double check and think about how to handle such cases
 # TODO when writing into Opportunity Database, add date it was created and date it was updated (e.g. relevancy needs to be updated daily)

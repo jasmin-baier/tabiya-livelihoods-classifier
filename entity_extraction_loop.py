@@ -2,8 +2,7 @@ import csv
 import pandas as pd
 from inference.linker import EntityLinker
 
-# TODO: Currently returns a LOT of skills (around 500 per job using full job description) -- probably overkill; try 20-25 per token instead of 100?
-# TODO: I am using extracted_skills1 in other files now. Better might be to merge extracted_skills2 & extracted_requirements
+# TODO: I am using extracted_skills1 in other files now. Better might be to merge extracted_skills2 & extracted_requirements? Though first quality check what is classified in requirements
 
 # Initialize the entity linker
 pipeline = EntityLinker(k=20, output_format='uuid') # for occupations, get 20
