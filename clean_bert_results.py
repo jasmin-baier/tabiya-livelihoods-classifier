@@ -10,7 +10,7 @@ import re
 # TODO: Now still using extracted_skills1, check if requirements are just a subset of skills 1; if yes OR more comprehensive, use extracted_skills2 & skill_requirements separately
 # TODO I have currently commented out all extra fields, in two places (e.g. date_posted etc) --> change once I decide how to pull these fields through the whole pipeline
 # TODO: opportunity DB should also have: when posted/when ends + and indicator if at date = today it is still relevant; or if it has been deleted (then also not relevant) --> for study consider keeping all relevant all the time to have larger number of jobs / have function that ensures there are at least 1000 jobs to compare to
-# TODO: ReferenceNumbers are not unique, I always need both GroupSourceID and ReferenceNumber
+# TODO: opportunity_ref_ids are not unique, I always need both opportunity_group_id and opportunity_ref_id
 # TODO output doesn't yet actually have all the columns I want
 
 # TODO Note that BERT taxonomy files don't have uuid history, so need to check if uuids will match correctly with Compass identified uuids
@@ -224,8 +224,8 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
         try:
             # Extract and clean the data
             # TODO consider making this more efficient at some point
-            opportunity_group_id = str(row['GroupSourceID'])
-            opportunity_ref_id = str(row['ReferenceNumber'])
+            opportunity_group_id = str(row['opportunity_group_id'])
+            opportunity_ref_id = str(row['opportunity_ref_id'])
             opportunity_title = str(row['opportunity_title']).strip()
             opportunity_description = str(row['opportunity_description']).strip()
             opportunity_requirements = str(row['opportunity_requirements']).strip()
@@ -324,8 +324,8 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
         except Exception as e:
             error_info = {
                 'row_index': index,
-                'opportunity_group_id': row.get('GroupSourceID', 'unknown'),
-                'opportunity_ref_id': row.get('ReferenceNumber', 'unknown'),
+                'opportunity_group_id': row.get('opportunity_group_id', 'unknown'),
+                'opportunity_ref_id': row.get('opportunity_ref_id', 'unknown'),
                 'error': str(e)
             }
             failed_parsing.append(error_info)
@@ -353,7 +353,7 @@ def transform_csv_to_job_data(csv_file_path: str, output_json_path: str) -> List
     if failed_parsing:
         print(f"\nFailed rows:")
         for failure in failed_parsing:
-            print(f"  - Row {failure['row_index']} (GroupID: {failure['opportunity_group_id']}, ReferenceNumber: {failure['opportunity_ref_id']}): {failure['error']}")
+            print(f"  - Row {failure['row_index']} (GroupID: {failure['opportunity_group_id']}, opportunity_ref_id: {failure['opportunity_ref_id']}): {failure['error']}")
     
     print(f"{'='*60}")
     
@@ -376,7 +376,7 @@ def preview_transformation(csv_file_path: str, num_rows: int = 3):
         for i in range(min(num_rows, len(df))):
             row = df.iloc[i]
             print(f"\nROW {i+1}:")
-            print(f"Job ID: {row['ReferenceNumber']}")
+            print(f"Job ID: {row['opportunity_ref_id']}")
             print(f"Job Title: {row['opportunity_title']}")
             print(f"Job Description: {row['opportunity_description'][:100]}...")
             print(f"Job Requirements: {row['opportunity_requirements'][:100]}...")
@@ -406,7 +406,7 @@ if __name__ == "__main__":
     base_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study")
 
     # File paths
-    csv_file_path = base_dir / "2025-07-27_BERT_extracted_occupations_skills_uuid.csv"  # Your CSV file path  
+    csv_file_path = base_dir / "BERT_extracted_occupations_skills_uuid.csv"  # Your CSV file path  
     output_json_path = base_dir / "bert_cleaned.json"  # Output JSON file
   
     # First, preview the transformation

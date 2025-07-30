@@ -1,79 +1,89 @@
-from google import genai
-from google.genai import types
 import json
+import logging
+import time
 from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
-# TODO: It currently comes up with skills and occupations IF there is no input.
+from google import genai
+from google.api_core import exceptions as google_exceptions
+from google.genai import types
+
+# TODO: Give option not to choose any required skills if job ad sounds like there aren't any pre-requisites in terms of skills, especially if it a learnership or certificate
+# TODO Ask Gemini to help improve my prompt, note that I specifically want to get at "key necessary skills and requirements the employer would be looking for in an applicant"
+# TODO Do I currently tell LLM how many skills to return? Do i have it choose how many are most important?
 
 # ============================================================================
-# SHARED HELPER FUNCTIONS
+# 1. SETUP & CONFIGURATION
 # ============================================================================
 
-def load_job_data(json_file_path):
-    """Load opportunity data from a JSON file."""
-    with open(json_file_path, 'r', encoding='utf-8') as file:
-        return json.load(file)
+# Configure logging for clear and structured output
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def parse_response(opportunity_group_id, opportunity_ref_id, opportunity_title, response_text):
-    """Parse and validate the model's JSON response."""
-    
-    # Clean the response string to remove Markdown formatting
-    clean_text = response_text.strip()
-    if clean_text.startswith("```json"):
-        clean_text = clean_text[7:] # Remove ```json\n
-    if clean_text.endswith("```"):
-        clean_text = clean_text[:-3] # Remove ```
-    
-    try:
-        # Now, parse the cleaned string
-        parsed_response = json.loads(clean_text.strip())
-        print(f"✓ Successfully parsed JSON for opportunity {opportunity_group_id} - {opportunity_ref_id}")
-        return parsed_response, True
-    except json.JSONDecodeError as e:
-        error_response = {
-            "opportunity_group_id": opportunity_group_id,
-            "opportunity_ref_id": opportunity_ref_id,
-            "opportunity_title": opportunity_title,
-            "error": "Invalid JSON response",
-            "error_details": str(e),
-            "raw_response": response_text.strip() # Log the original raw response for debugging
-        }
-        print(f"⚠ Failed to parse JSON for opportunity {opportunity_group_id} - {opportunity_ref_id}: {e}")
-        return error_response, False
+def load_or_initialize_results(output_file: Path) -> Tuple[List[Dict[str, Any]], set]:
+    """
+    Loads existing results from the output file or returns an empty structure.
+    This allows the script to be restarted and skip already processed jobs.
+    """
+    if output_file.exists():
+        logging.info(f"Found existing output file. Loading previous results from {output_file}")
+        with open(output_file, 'r', encoding='utf-8') as f:
+            try:
+                existing_results = json.load(f)
+                # Create a set of reference IDs that have already been processed successfully
+                processed_ids = {
+                    result['opportunity_ref_id']
+                    for result in existing_results
+                    if 'error' not in result or result.get('error') != "Skipped"
+                }
+                logging.info(f"Loaded {len(existing_results)} previous results. Found {len(processed_ids)} already processed jobs.")
+                return existing_results, processed_ids
+            except json.JSONDecodeError:
+                logging.warning(f"Could not decode JSON from {output_file}. Starting fresh.")
+                return [], set()
+    return [], set()
 
-
-def save_all_responses_to_file(all_responses, output_file):
-    """Save all responses to a single JSON file."""
+def save_results_to_file(all_responses: List[Dict[str, Any]], output_file: Path):
+    """Saves the entire list of responses to a JSON file, overwriting it."""
     try:
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(all_responses, f, indent=2, ensure_ascii=False)
-        print(f"✓ Saved all responses to: {output_file}")
-        return True
     except Exception as e:
-        print(f"✗ Failed to save the combined file: {e}")
-        return False
+        logging.error(f"FATAL: Could not save results to {output_file}. Error: {e}")
+
+def load_job_data(json_file_path: Path) -> List[Dict[str, Any]]:
+    """Load opportunity data from a JSON file."""
+    logging.info(f"Loading job data from {json_file_path}...")
+    with open(json_file_path, 'r', encoding='utf-8') as file:
+        return json.load(file)
 
 # ============================================================================
-# --- Ask LLM to pick OCCUPATION ---
+# 2. PROMPT CREATION
 # ============================================================================
 
-def create_occupation_prompt(full_details, potential_occupations):
+def create_occupation_prompt(full_details: str, potential_occupations: List[str]) -> str:
     """Create the prompt for occupation ranking and selection."""
     occupations_text = "\n".join([f"- {occ}" for occ in potential_occupations])
+    return f"""You are an expert job placement specialist.
     
-    prompt_text = f"""You are be provided with the following information:
-Opportunity Details: {full_details}
-Potential Occupations: {occupations_text}
+Based on the following opportunity details and list of potential occupations, your task is to identify the most suitable occupation.
 
-Instructions:
-1. Rank the potential occupations from most to least likely to be the best fit.
-2. From the top three, choose the one that best fits the opportunity.
-3. Provide detailed reasoning for your choice.
-4. Output the results in JSON format, ranked list, final choice, and reasoning.
+**Opportunity Details:**
+---
+{full_details}
+---
 
-Do not make up any occupations. Only use the provided list.
+**Potential Occupations:**
+{occupations_text}
 
-Example JSON Output:
+**Instructions:**
+1.  Carefully analyze the opportunity details.
+2.  Rank all the potential occupations from most to least likely to be the best fit.
+3.  From your top three ranked occupations, choose the single one that best represents the core function of the opportunity.
+4.  Provide clear, concise reasoning for your final choice, referencing specific parts of the opportunity details.
+5.  Output the results in a valid JSON format as specified below. Do not add any text or markdown formatting outside of the JSON block.
+
+**Example JSON Output:**
+```json
 {{
   "ranked_occupations": [
     {{"occupation": "Software Engineer", "rank": 1}},
@@ -81,238 +91,267 @@ Example JSON Output:
   ],
   "final_choice": {{
     "occupation": "Software Engineer",
-    "reasoning": "The description's focus on software development aligns with a Software Engineer role."
+    "reasoning": "The description's primary focus on designing, developing, and maintaining software systems aligns directly with the core responsibilities of a Software Engineer role."
   }}
-}}"""
-    return prompt_text
+}}
+```"""
 
-def process_single_job_for_occupation(client, model, job_data, generate_content_config):
-    """Process a single job to determine its occupation."""
-    opportunity_group_id = job_data['opportunity_group_id'][0]
-    opportunity_ref_id = job_data['opportunity_ref_id'][0]
-    opportunity_title = job_data['opportunity_title'][0]
-    
-    # If the list of potential occupations is empty, skip this job.
-    if not job_data.get('potential_occupations'):
-        print(f"⚪ Skipping Job ID {opportunity_group_id} - {opportunity_ref_id}: No potential occupations provided.")
-        skip_response = {
-            "opportunity_group_id": opportunity_group_id,
-            "opportunity_ref_id": opportunity_ref_id,
-            "opportunity_title": opportunity_title,
-            "error": "Skipped",
-            "error_details": "No potential occupations were provided in the input data."
-        }
-        return skip_response, False
-    
-    print(f"\n{'='*50}\nProcessing Occupation for Job ID: {opportunity_group_id} - {opportunity_ref_id}\nJob Title: {job_data['opportunity_title'][0]}\n{'='*50}")
-
-    prompt_text = create_occupation_prompt(
-        job_data['full_details'],
-        job_data['potential_occupations']
-    )
-    
-    contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt_text)])]
-    
-    print(f"\nResponse for Job ID {opportunity_group_id} - {opportunity_ref_id}:\n" + "-"*30)
-    response_text = ""
-    try:
-        for chunk in client.models.generate_content_stream(model=model, contents=contents, config=generate_content_config):
-            print(chunk.text, end="")
-            response_text += chunk.text
-        
-        print("\n" + "-" * 30)
-        return parse_response(opportunity_group_id, opportunity_ref_id, opportunity_title, response_text)
-        
-    except Exception as e:
-        print(f"\n✗ Error generating response for job {opportunity_group_id} - {opportunity_ref_id}: {e}")
-        return {"opportunity_group_id": opportunity_group_id, 
-                "opportunity_ref_id": opportunity_ref_id, 
-                "opportunity_title": opportunity_title,
-                "error": "Generation failed", 
-                "error_details": str(e)}, False
-
-def generate_for_all_jobs_occupations(json_file_path, output_file):
-    """Main function to process occupations for all jobs."""
-    client = genai.Client(vertexai=True, project="ihu-access", location="global")
-    si_text = """You are an expert job placement specialist. You will receive opportunity details and a list of potential occupations. Your task is to rank the potential occupations from most to least fitting based on the opportunity details. Then, from the top three occupations, select the one that best fits the opportunity details. The output should be a JSON file containing the ranked list of occupations, the final choice, and the reasoning behind the choice."""
-    model = "gemini-2.5-pro"
-    generate_content_config = types.GenerateContentConfig(temperature=1, top_p=0.95, max_output_tokens=8192, system_instruction=[types.Part.from_text(text=si_text)])
-    
-    job_data_list = load_job_data(json_file_path)
-    print(f"Loaded {len(job_data_list)} jobs. Output will be saved to: {output_file}")
-    
-    all_responses, successful_jobs, failed_jobs = [], [], []
-    
-    for i, job_data in enumerate(job_data_list, 1):
-        print(f"\n\nProcessing job {i}/{len(job_data_list)} for occupation.")
-        response, is_valid = process_single_job_for_occupation(client, model, job_data, generate_content_config)
-        
-        if is_valid:
-            # Add the opportunity title and ids to the successful response
-            response['opportunity_title'] = job_data['opportunity_title'][0] 
-            response['opportunity_group_id'] = job_data['opportunity_group_id'][0] 
-            response['opportunity_ref_id'] = job_data['opportunity_ref_id'][0] 
-
-        all_responses.append(response)
-        
-        (successful_jobs if is_valid else failed_jobs).append({
-            'opportunity_group_id': job_data.get('opportunity_group_id', 'unknown'),
-            'opportunity_ref_id': job_data.get('opportunity_ref_id', 'unknown'),
-            'opportunity_title': job_data.get('opportunity_title', ['unknown'])[0], 
-            'error': response.get('error', 'Unknown error') if not is_valid else None
-        })
-    
-    save_all_responses_to_file(all_responses, output_file)
-    print_summary(len(job_data_list), successful_jobs, failed_jobs, output_file)
-
-# ============================================================================
-# --- Ask LLM to pick SKILLS ---
-# ============================================================================
-
-def create_skills_prompt(full_details, potential_skills, potential_skill_requirements):
-    """Create the prompt for skill extraction and ranking."""
-    combined_skills = potential_skills + potential_skill_requirements
+def create_skills_prompt(full_details: str, potential_skills: List[str], potential_skill_requirements: List[str]) -> str:
+    """Create the prompt for skill extraction and ranking, with improved instructions."""
+    combined_skills = sorted(list(set(potential_skills + potential_skill_requirements)))
     skills_text = "\n".join([f"- {sk}" for sk in combined_skills])
     
-    prompt_text = f"""Here are the opportunity details:
-{full_details}
+    return f"""You are an expert technical recruiter with deep knowledge of the job market.
 
-Here is a list of potential skills:
+Based on the provided opportunity details and a list of potential skills, your task is to identify the key skills required for the role.
+
+**Opportunity Details:**
+---
+{full_details}
+---
+
+**List of Potential Skills to Choose From:**
 {skills_text}
 
-Follow these rules:
-* Scan the opportunity details.
-* Rank the skills by importance.
-* Choose all skills that seem required for hire.
-* Choose the top 5 most important skills, ordered by importance.
-* Output the results in a structured JSON format.
+**Instructions:**
+1.  **Analyze the Text**: Scrutinize the opportunity details to understand the employer's needs.
+2.  **Identify Required Skills**: From the provided list, select all skills that are **required** for the job. A "required" skill is a non-negotiable prerequisite, meaning an applicant would likely be disqualified without it.
+3.  **Identify Important Skills**: From the provided list, select the top 5 most **important** skills. "Important" skills are those that would make a candidate highly competitive. This list should be ordered by importance, from most to least.
+4.  **Handle Entry-Level Roles**: If the opportunity appears to be an entry-level position, learnership, or has no explicit prerequisites, it is acceptable to return an empty list for `required_skills`.
+5.  **Strict JSON Output**: Format your response as a single, valid JSON object. Do not include any explanatory text or markdown formatting outside of the JSON block.
 
-Do not make up any skills. Only use the provided list.
-
-Here is an example of the desired output format:
+**Example JSON Output:**
+```json
 {{
-  "required_skills": ["skill1", "skill2"],
-  "top_5_important_skills": ["skill3", "skill4", "skill5", "skill6", "skill7"]
-}}"""
-    return prompt_text
+  "required_skills": [
+    "Python",
+    "SQL"
+  ],
+  "top_5_important_skills": [
+    "Machine Learning",
+    "Data Analysis",
+    "Python",
+    "Communication",
+    "SQL"
+  ]
+}}
+```"""
 
-def process_single_job_for_skills(client, model, job_data, generate_content_config):
-    """Process a single job to extract its key skills."""
+
+# ============================================================================
+# 3. CORE PROCESSING LOGIC
+# ============================================================================
+
+def parse_llm_response(response_text: str) -> Tuple[Dict[str, Any], bool]:
+    """Cleans and parses the model's JSON response string."""
+    clean_text = response_text.strip()
+    if clean_text.startswith("```json"):
+        clean_text = clean_text[7:]
+    if clean_text.endswith("```"):
+        clean_text = clean_text[:-3]
+    
+    try:
+        parsed_response = json.loads(clean_text.strip())
+        return parsed_response, True
+    except json.JSONDecodeError as e:
+        logging.warning(f"Failed to parse JSON. Error: {e}")
+        error_details = {"error": "Invalid JSON response", "error_details": str(e), "raw_response": response_text}
+        return error_details, False
+
+def call_gemini_with_retry(
+    client: genai.GenerativeModel,
+    contents: List[types.Content],
+    config: types.GenerateContentConfig,
+    max_retries: int = 3
+) -> str:
+    """Calls the Gemini API with a retry mechanism for transient errors."""
+    retriable_errors = (
+        google_exceptions.ResourceExhausted,
+        google_exceptions.ServiceUnavailable,
+        google_exceptions.InternalServerError,
+    )
+    for attempt in range(max_retries):
+        try:
+            # Using streaming for potential future use or large responses
+            response_chunks = client.generate_content(contents=contents, generation_config=config, stream=False)
+            return response_chunks.text
+        except retriable_errors as e:
+            logging.warning(f"API call failed with retriable error: {e}. Attempt {attempt + 1} of {max_retries}.")
+            if attempt + 1 == max_retries:
+                logging.error("Max retries reached. Failing the API call.")
+                raise  # Re-raise the exception to be caught by the main loop
+            time.sleep(2 ** attempt)  # Exponential backoff
+    raise Exception("API call failed after all retries.") # Should not be reached, but for safety
+
+
+def process_single_job(
+    client: genai.GenerativeModel,
+    job_data: Dict[str, Any],
+    config: types.GenerateContentConfig,
+    process_type: str,
+) -> Tuple[Dict[str, Any], bool]:
+    """
+    Processes a single job for either 'skills' or 'occupations'.
+    Handles prompt creation, API call, and response parsing.
+    """
     opportunity_group_id = job_data['opportunity_group_id'][0]
     opportunity_ref_id = job_data['opportunity_ref_id'][0]
     opportunity_title = job_data['opportunity_title'][0]
 
-    # If BOTH skills lists are empty, skip this job.
-    # We use .get() as a safe way to access keys that might not exist.
-    if not job_data.get('potential_skills') and not job_data.get('potential_skill_requirements'):
-        print(f"⚪ Skipping Job ID {opportunity_group_id} - {opportunity_ref_id}: No potential skills provided.")
-        skip_response = {
-            "opportunity_group_id": opportunity_group_id,
-            "opportunity_ref_id": opportunity_ref_id,
-            "opportunity_title": opportunity_title,
-            "error": "Skipped",
-            "error_details": "No potential skills or skill requirements were provided in the input data."
-        }
-        return skip_response, False
+    base_response = {
+        "opportunity_group_id": opportunity_group_id,
+        "opportunity_ref_id": opportunity_ref_id,
+        "opportunity_title": opportunity_title,
+    }
+    
+    # --- 1. Create Prompt based on process type ---
+    if process_type == 'skills':
+        if not job_data.get('potential_skills') and not job_data.get('potential_skill_requirements'):
+            logging.warning(f"Skipping SKILLS for {opportunity_ref_id}: No potential skills provided.")
+            base_response.update({"error": "Skipped", "error_details": "No potential skills in input."})
+            return base_response, False
+        prompt_text = create_skills_prompt(
+            job_data['full_details'],
+            job_data.get('potential_skills', []),
+            job_data.get('potential_skill_requirements', [])
+        )
+    elif process_type == 'occupations':
+        if not job_data.get('potential_occupations'):
+            logging.warning(f"Skipping OCCUPATION for {opportunity_ref_id}: No potential occupations provided.")
+            base_response.update({"error": "Skipped", "error_details": "No potential occupations in input."})
+            return base_response, False
+        prompt_text = create_occupation_prompt(
+            job_data['full_details'],
+            job_data['potential_occupations']
+        )
+    else:
+        raise ValueError("Invalid process_type specified.")
+
+    # --- 2. Call LLM with retry logic ---
+    contents = [types.Part.from_text(text=prompt_text)]
+    try:
+        logging.info(f"Generating LLM response for {opportunity_ref_id}...")
+        response_text = call_gemini_with_retry(client, contents, config)
+    except Exception as e:
+        logging.error(f"Generation failed for {opportunity_ref_id} after all retries: {e}")
+        base_response.update({"error": "Generation failed", "error_details": str(e)})
+        return base_response, False
+
+    # --- 3. Parse Response ---
+    parsed_data, is_valid = parse_llm_response(response_text)
+    if not is_valid:
+        base_response.update(parsed_data) # Add error details from parsing
+        return base_response, False
+
+    # --- 4. Success ---
+    logging.info(f"Successfully processed {opportunity_ref_id}.")
+    base_response.update(parsed_data)
+    return base_response, True
 
 
-    print(f"\n{'='*50}\nProcessing Skills for Job ID: {opportunity_group_id} - {opportunity_ref_id}\nJob Title: {job_data['opportunity_title'][0]}\n{'='*50}")
+# ============================================================================
+# 4. MAIN EXECUTION ORCHESTRATOR
+# ============================================================================
 
-    prompt_text = create_skills_prompt(
-        job_data['full_details'],
-        job_data.get('potential_skills', []),
-        job_data.get('potential_skill_requirements', []) 
+def process_all_jobs(
+    input_file: Path,
+    output_file: Path,
+    process_type: str, # 'skills' or 'occupations'
+    config: Dict[str, Any]
+):
+    """
+    Main orchestration function to process all jobs for a given type.
+    Handles loading data, skipping processed jobs, calling the processor,
+    and saving results incrementally.
+    """
+    logging.info(f"\n{'='*60}\n--- STARTING {process_type.upper()} PROCESSING ---\n{'='*60}")
+    
+    # --- Setup ---
+    client = genai.GenerativeModel(config['model_name'])
+    system_instruction_text = (
+        "You are an expert job recruiter. You are excellent at scanning job descriptions and extracting the most important skills."
+        if process_type == 'skills'
+        else "You are an expert job placement specialist. Your task is to rank potential occupations and select the best fit for a job opportunity."
     )
     
-    contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt_text)])]
+    generation_config = types.GenerationConfig(
+        temperature=config['temperature'],
+        top_p=config['top_p'],
+        max_output_tokens=config['max_output_tokens'],
+    )
     
-    print(f"\nResponse for Opportunity ID {opportunity_group_id} - {opportunity_ref_id}:\n" + "-" * 30)
-    response_text = ""
-    try:
-        for chunk in client.models.generate_content_stream(model=model, contents=contents, config=generate_content_config):
-            print(chunk.text, end="")
-            response_text += chunk.text
-        
-        print("\n" + "-" * 30)
-        return parse_response(opportunity_group_id, opportunity_ref_id, opportunity_title, response_text)
-        
-    except Exception as e:
-        print(f"\n✗ Error generating response for opportunity {opportunity_group_id} - {opportunity_ref_id}: {e}")
-        return {"opportunity_group_id": opportunity_group_id, 
-                "opportunity_ref_id": opportunity_ref_id, 
-                "ooportunity_title": opportunity_title, 
-                "error": "Generation failed", 
-                "error_details": str(e)}, False
+    job_data_list = load_job_data(input_file)
+    all_responses, processed_ids = load_or_initialize_results(output_file)
+    
+    # Create a map of existing results for easy updating
+    response_map = {res['opportunity_ref_id']: res for res in all_responses}
 
-def generate_for_all_jobs_skills(json_file_path, output_file):
-    """Main function to process skills for all jobs."""
-    client = genai.Client(vertexai=True, project="ihu-access", location="global")
-    si_text = """You are an expert job recruiter. You are excellent at scanning job descriptions (called opportunity details) and extracting the most important skills for the job opportunity."""
-    model = "gemini-2.5-pro"
-    generate_content_config = types.GenerateContentConfig(temperature=1, top_p=0.95, max_output_tokens=8192, system_instruction=[types.Part.from_text(text=si_text)])
-    
-    job_data_list = load_job_data(json_file_path)
-    print(f"Loaded {len(job_data_list)} jobs. Output will be saved to: {output_file}")
-    
-    all_responses, successful_jobs, failed_jobs = [], [], []
-
+    # --- Main Loop ---
+    total_jobs = len(job_data_list)
     for i, job_data in enumerate(job_data_list, 1):
-        print(f"\n\nProcessing job {i}/{len(job_data_list)} for skills.")
-        response, is_valid = process_single_job_for_skills(client, model, job_data, generate_content_config)
+        job_ref_id = job_data['opportunity_ref_id'][0]
+        job_title = job_data['opportunity_title'][0]
+
+        logging.info(f"\n--- Processing job {i}/{total_jobs} ({job_ref_id}: {job_title}) ---")
+
+        if job_ref_id in processed_ids:
+            logging.info(f"Job {job_ref_id} has already been processed. Skipping.")
+            continue
+
+        response, is_valid = process_single_job(client, job_data, generation_config, process_type)
         
-        if is_valid:
-            # Add the opportunity title and ids to the successful response
-            response['opportunity_title'] = job_data['opportunity_title'][0] 
-            response['opportunity_group_id'] = job_data['opportunity_group_id'][0] 
-            response['opportunity_ref_id'] = job_data['opportunity_ref_id'][0] 
+        # Add or update the response in our map
+        response_map[job_ref_id] = response
+        
+        # Incrementally save the entire updated list after each API call
+        save_results_to_file(list(response_map.values()), output_file)
 
-        all_responses.append(response)
-
-        (successful_jobs if is_valid else failed_jobs).append({
-            'opportunity_group_id': job_data.get('opportunity_group_id', 'unknown'),
-            'opportunity_ref_id': job_data.get('opportunity_ref_id', 'unknown'),
-            'opportunity_title': job_data.get('opportunity_title', ['unknown'])[0],
-            'error': response.get('error', 'Unknown error') if not is_valid else None
-        })
-
-    save_all_responses_to_file(all_responses, output_file)
-    print_summary(len(job_data_list), successful_jobs, failed_jobs, output_file)
-
-# ============================================================================
-# UTILITY AND EXECUTION
-# ============================================================================
-
-def print_summary(total_jobs, successful_jobs, failed_jobs, output_file):
-    """Prints a summary of the processing results."""
-    print(f"\n\n{'='*60}\nPROCESSING SUMMARY\n{'='*60}")
-    print(f"Total jobs processed: {total_jobs}")
-    print(f"Successful: {len(successful_jobs)}")
-    print(f"Failed: {len(failed_jobs)}")
+    # --- Final Summary ---
+    final_results = list(response_map.values())
+    successful_jobs = [r for r in final_results if 'error' not in r]
+    failed_jobs = [r for r in final_results if 'error' in r]
     
-    if successful_jobs:
-        print("\n✓ Successfully processed jobs:")
-        for job in successful_jobs:
-            print(f"  - {job['opportunity_ref_id']}: {job['opportunity_title']}")
-    
+    logging.info(f"\n\n{'='*60}\n{process_type.upper()} PROCESSING SUMMARY\n{'='*60}")
+    logging.info(f"Total jobs in input: {total_jobs}")
+    logging.info(f"Total results in output file: {len(final_results)}")
+    logging.info(f"Successful: {len(successful_jobs)}")
+    logging.info(f"Failed/Skipped: {len(failed_jobs)}")
     if failed_jobs:
-        print("\n✗ Failed jobs:")
+        logging.warning("\n--- Failed/Skipped Jobs ---")
         for job in failed_jobs:
-            print(f"  - {job['opportunity_ref_id']}: {job['opportunity_title']} ({job['error']})")
-    
-    print(f"\nAll responses saved in: {output_file}\n{'='*60}")
+            logging.warning(f"  - {job['opportunity_ref_id']}: {job['opportunity_title']} ({job['error']}: {job.get('error_details', 'N/A')})")
+    logging.info(f"\nFinal results are saved in: {output_file}\n{'='*60}")
+
 
 if __name__ == "__main__":
-    # Set the base directory
-    base_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study")
+    # Centralized configuration for easy changes
+    CONFIG = {
+        "base_dir": Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study"),
+        #"input_file_name": "bert_cleaned.json", 
+        #"input_file_name": "bert_cleaned_subset250.json", # for pipeline testing 
+        # "input_file_name": "bert_cleaned_subset6.json", # small trial
+        "input_file_name": "bert_cleaned_subset1.json", # tiny trial
+        "model_name": "gemini-1.5-pro-latest", # Or "gemini-1.5-flash-latest" for speed/cost savings
+        "temperature": 0.5, # Lowered for more deterministic and structured output
+        "top_p": 0.95,
+        "max_output_tokens": 8192,
+    }
+
+    # Initialize the GenAI client once
+    genai.configure(project="ihu-access", location="global")
 
     # --- Execute Occupation Reranking ---
-    print("\n--- STARTING OCCUPATION RERANKING ---")
-    occupation_input_file = base_dir / "opportunities_llm_test.json"
-    occupation_output_file = base_dir / "job_responses_occupations_combined.json"
-    generate_for_all_jobs_occupations(occupation_input_file, occupation_output_file)
+    process_all_jobs(
+        input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
+        output_file=CONFIG['base_dir'] / "job_responses_occupations_robust.json",
+        process_type='occupations',
+        config=CONFIG
+    )
 
     # --- Execute Skills Reranking ---
-    print("\n--- STARTING SKILLS RERANKING ---")
-    skills_input_file = base_dir / "opportunities_llm_test.json"
-    skills_output_file = base_dir / "job_responses_skills_combined.json"
-    generate_for_all_jobs_skills(skills_input_file, skills_output_file)
+    process_all_jobs(
+        input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
+        output_file=CONFIG['base_dir'] / "job_responses_skills_robust.json",
+        process_type='skills',
+        config=CONFIG
+    )

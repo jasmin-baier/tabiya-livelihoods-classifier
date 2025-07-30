@@ -21,10 +21,10 @@ base_path = os.path.join("C:", os.sep, "Users", "jasmi", "OneDrive - Nexus365",
                          "Ongoing", "Compass", "data", "pre_study")
 
 # Define the full paths for each of the CSV files.
-file_path_skills_others = os.path.join(base_path, "dummy_data_skills_temporary.csv") # instead of csv, can I just take it from the current users of compass on harambee deployment; then always randomly choose 100; at ground 0 say "if I don't have enough users here, start picking from..." pilot one's as "baseline" as csv; note that this is a list of lists
+file_path_skills_others = os.path.join(base_path, "dummy_data_jobseeker_db.json") # instead of csv, can I just take it from the current users of compass on harambee deployment; then always randomly choose 100; at ground 0 say "if I don't have enough users here, start picking from..." pilot one's as "baseline" as csv; note that this is a list of lists
 #file_path_skills = os.path.join(base_path, "dummy_data_skills_others.csv")
-file_path_baseline = os.path.join(base_path, "dummy_data_baseline_beliefs.csv")
-file_path_jobs = os.path.join(base_path, "dummy_data_jobs.csv") 
+file_path_baseline = os.path.join(base_path, "dummy_data_registration_db.csv")
+file_path_jobs = os.path.join(base_path, "dummy_data_opportunity_db.json") 
 
 df_skills_others = pd.read_csv(file_path_skills_others)
 df_bl = pd.read_csv(file_path_baseline)
@@ -169,3 +169,11 @@ if not df_current_person_skills.empty and 'harambee_id' in df_current_person_ski
         print(f"\nWarning: Could not find matching belief data for harambee_id '{current_harambee_id}' or 'belief_percentage_jobs' column is missing.")
 else:
     print("\nWarning: 'harambee_id' not found in skills data, cannot calculate belief difference.")
+
+
+import numpy as np
+
+np.random.seed(167)  # Set the seed for reproducibility
+vector = np.random.choice([1, 2], size=10)
+
+print(vector)
