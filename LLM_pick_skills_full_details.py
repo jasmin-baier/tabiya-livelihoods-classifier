@@ -40,11 +40,6 @@ def save_results_to_file(all_responses: List[Dict[str, Any]], output_file: Path)
     except Exception as e:
         logging.error(f"FATAL: Could not save results to {output_file}. Error: {e}")
 
-def load_job_data(json_file_path: Path) -> List[Dict[str, Any]]:
-    logging.info(f"Loading job data from {json_file_path}...")
-    with open(json_file_path, 'r', encoding='utf-8') as file:
-        return json.load(file)
-
 # ============================================================================
 # 2. PROMPT CREATION (No changes needed here)
 # ============================================================================
@@ -60,12 +55,48 @@ def create_occupation_prompt(full_details: str, potential_occupations: List[str]
 def create_skills_prompt(full_details: str, potential_skills: List[str], potential_skill_requirements: List[str]) -> str:
     combined_skills = sorted(list(set(potential_skills + potential_skill_requirements)))
     skills_text = "\n".join([f"- {sk}" for sk in combined_skills])
-    return f"""You are an expert technical recruiter with deep knowledge of the job market.
-    Based on the provided opportunity details and a list of potential skills, your task is to identify the key skills required for the role.
-    **Opportunity Details:**\n---\n{full_details}\n---\n**List of Potential Skills to Choose From:**\n{skills_text}
-    **Instructions:**\n1.  **Analyze the Text**: Scrutinize the opportunity details to understand the employer's needs.\n2.  **Identify Required Skills**: From the provided list, select all skills that are **required** for the job. A "required" skill is a non-negotiable prerequisite, meaning an applicant would likely be disqualified without it.\n3.  **Identify Important Skills**: From the provided list, select the most **important** skills. "Important" skills are those that would make a candidate highly competitive. This list should be ordered by importance, from most to least.\n4.  **Handle Entry-Level Roles**: If the opportunity appears to be an entry-level position, learnership, or has no explicit prerequisites, it is acceptable to return an empty list for `required_skills`.\n5.  **Strict JSON Output**: Format your response as a single, valid JSON object. Do not include any explanatory text or markdown formatting outside of the JSON block.
-    Do not make up any skills. Only use those provided.
-    **Example JSON Output:**\n```json\n{{\n  "required_skills": [\n    "Python",\n    "SQL"\n  ],\n  "top_5_important_skills": [\n    "Machine Learning",\n    "Data Analysis",\n    "Python",\n    "Communication",\n    "SQL"\n  ]\n}}\n```"""
+    
+    return f"""You are an expert technical recruiter with deep knowledge of the job market. Your task is to analyze a job opportunity and categorize skills based on the employer's needs at the time of application.
+
+**Opportunity Details:**
+---
+{full_details}
+---
+
+**List of Potential Skills to Choose From:**
+{skills_text}
+
+**Instructions:**
+1.  **Analyze the Role**: Carefully read the opportunity details to understand what the employer is looking for in an applicant *at the time of application*.
+
+2.  **Identify "Required Skills"**: From the provided list, select only the skills that an employer **needs to see in a candidate to even consider hiring them**. These are the non-negotiable, "must-have" prerequisites.
+
+3.  **Identify "Important Skills"**: From the provided list, select the skills that **would make an applicant stronger** or more competitive. These are desirable, "nice-to-have" skills. Please return the a good number of important skills, ordered from most to least important. Use your judgement to decide which and how many are relevant.
+
+4.  **Exclude "On-the-Job" Skills**: Crucially, **do not include skills that the job ad states or implies will be taught or developed after hiring**. Your focus is strictly on the requirements at the point of application.
+
+5.  **Handle Entry-Level Roles**: If there are no clear prerequisites (e.g., for a learnership), it is correct to return an empty list for `required_skills`.
+
+6.  **Use Provided List Only**: Do not make up any skills. You must only choose from the list of potential skills provided.
+
+7.  **Strict JSON Output**: Format your response as a single, valid JSON object. Do not include any explanatory text or markdown formatting outside of the JSON block.
+
+**Example JSON Output:**
+```json
+{{
+  "required_skills": [
+    "Commercial Driver's License (CDL)",
+    "Clean Driving Record"
+  ],
+  "top_5_important_skills": [
+    "Customer Service",
+    "Time Management",
+    "Communication",
+    "Problem-Solving",
+    "Defensive Driving"
+  ]
+}}
+```"""
 
 # ============================================================================
 # 3. CORE PROCESSING LOGIC
@@ -156,15 +187,20 @@ def process_single_job(
 # ============================================================================
 # 4. MAIN EXECUTION ORCHESTRATOR
 # ============================================================================
+# This is the new, memory-efficient version of the function
 def process_all_jobs(
     input_file: Path,
     output_file: Path,
     process_type: str,
     config: Dict[str, Any]
 ):
+    """
+    Main orchestration function. Processes jobs one-by-one from the input
+    file to conserve memory.
+    """
     logging.info(f"\n{'='*60}\n--- STARTING {process_type.upper()} PROCESSING ---\n{'='*60}")
     
-    # Step 3: Initialize Vertex AI and the model
+    # Initialize Vertex AI and the model
     vertexai.init(project=config['project'], location=config['location'])
     client = GenerativeModel(config['model_name'])
     
@@ -173,34 +209,48 @@ def process_all_jobs(
         top_p=config['top_p'],
         max_output_tokens=config['max_output_tokens'],
     )
-    job_data_list = load_job_data(input_file)
+    
     all_responses, processed_ids = load_or_initialize_results(output_file)
     response_map = {res['opportunity_ref_id']: res for res in all_responses}
-    total_jobs = len(job_data_list)
+    
+    # --- Main Loop: Reads one job at a time from the file ---
+    processed_count = 0
+    with open(input_file, 'rb') as f: # Must open in binary mode for ijson
+        # Create an iterator that yields one job object at a time
+        jobs_iterator = ijson.items(f, 'item')
+        
+        for i, job_data in enumerate(jobs_iterator, 1):
+            processed_count = i
+            job_ref_id = job_data['opportunity_ref_id']
+            job_title = job_data['opportunity_title']
 
-    for i, job_data in enumerate(job_data_list, 1):
-        job_ref_id = job_data['opportunity_ref_id'][0]
-        job_title = job_data['opportunity_title'][0]
-        logging.info(f"\n--- Processing job {i}/{total_jobs} ({job_ref_id}: {job_title}) ---")
-        if job_ref_id in processed_ids:
-            logging.info(f"Job {job_ref_id} has already been processed. Skipping.")
-            continue
-        response, is_valid = process_single_job(client, job_data, generation_config, process_type)
-        response_map[job_ref_id] = response
-        save_results_to_file(list(response_map.values()), output_file)
+            logging.info(f"\n--- Processing job {i} ({job_ref_id}: {job_title}) ---")
 
+            if job_ref_id in processed_ids:
+                logging.info(f"Job {job_ref_id} has already been processed. Skipping.")
+                continue
+
+            response, is_valid = process_single_job(client, job_data, generation_config, process_type)
+            
+            # Add or update the response in our map and save incrementally
+            response_map[job_ref_id] = response
+            save_results_to_file(list(response_map.values()), output_file)
+
+    # --- Final Summary ---
     final_results = list(response_map.values())
     successful_jobs = [r for r in final_results if 'error' not in r]
     failed_jobs = [r for r in final_results if 'error' in r]
+    
     logging.info(f"\n\n{'='*60}\n{process_type.upper()} PROCESSING SUMMARY\n{'='*60}")
-    logging.info(f"Total jobs in input: {total_jobs}")
+    logging.info(f"Total jobs processed from file: {processed_count}")
     logging.info(f"Total results in output file: {len(final_results)}")
     logging.info(f"Successful: {len(successful_jobs)}")
     logging.info(f"Failed/Skipped: {len(failed_jobs)}")
     if failed_jobs:
         logging.warning("\n--- Failed/Skipped Jobs ---")
         for job in failed_jobs:
-            logging.warning(f"  - {job['opportunity_ref_id']}: {job['opportunity_title']} ({job['error']}: {job.get('error_details', 'N/A')})")
+            error_details = job.get('error_details', 'N/A')
+            logging.warning(f"  - {job['opportunity_ref_id']}: {job['opportunity_title']} ({job['error']}: {str(error_details)[:200]})") # Truncate long errors
     logging.info(f"\nFinal results are saved in: {output_file}\n{'='*60}")
 
 if __name__ == "__main__":
