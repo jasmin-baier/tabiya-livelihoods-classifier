@@ -1,9 +1,9 @@
 
-# Only keep final chosen occupation
-# Also merge back on thos jobs that had 0 occupations/skills from bert (if at least one of them was non-zero it should be in LLM files)
-# Make sure to merge other job variables back in
-# map back to uuids
-# bring into correct structure as per Miro
+# TODO Only keep final chosen occupation
+# TODO Also merge back on thos jobs that had 0 occupations/skills from bert (if at least one of them was non-zero it should be in LLM files)
+# TODO Make sure to merge other job variables back in
+# TODO map back to uuids --> but the ones from tabiya taxonomy (in future make robust to changes in ids somehow)
+# TODO bring into correct structure as per Miro
 
 import pandas as pd
 import json

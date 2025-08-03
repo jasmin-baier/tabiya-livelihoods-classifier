@@ -1,4 +1,5 @@
 import json
+import ijson
 import logging
 import time
 from pathlib import Path
@@ -8,6 +9,8 @@ from typing import Any, Dict, List, Tuple
 import vertexai
 from google.api_core import exceptions as google_exceptions
 from vertexai.generative_models import GenerationConfig, GenerativeModel
+
+# TODO IMPORTANT: Need to give it occupation descriptions as well
 
 # ============================================================================
 # 1. SETUP & CONFIGURATION
@@ -257,7 +260,8 @@ if __name__ == "__main__":
     CONFIG = {
         "base_dir": Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study"),
         #"input_file_name": "bert_cleaned.json",
-        "input_file_name": "bert_cleaned_subset250.json",
+        #"input_file_name": "bert_cleaned_subset250.json",
+        "input_file_name": "bert_cleaned_subset6.json",
         #"input_file_name": "bert_cleaned_subset1.json",
         "model_name": "gemini-2.5-pro", # Use a valid Vertex AI model name
         "project": "ihu-access",

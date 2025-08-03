@@ -1,6 +1,7 @@
 # NOTE: It is important that this script renames extracted_occupations and extracted_skills1 to "potential_occupations" and "potential_skills" for LLM file to work
 
 import pandas as pd
+import io
 import json
 import ast
 from typing import List, Dict, Any
@@ -13,6 +14,14 @@ import re
 # TODO: opportunity_ref_ids are not unique, I always need both opportunity_group_id and opportunity_ref_id
 # TODO output doesn't yet actually have all the columns I want
 
+# PRIORITY
+# TODO IMPORTANT: Need to give it occupation descriptions as well, and add that into LLM file also
+# TODO: Consider moving the LOAD MAPPINGS file paths and execution to the main at the bottom
+# TODO: For skill group mapping three steps: (1) find different / new uuids in skills file (2) find skillgroup uuid (parent) in skills_hierarchy (3) find skillgroup preferred label in skill_groups --> more robust if I don't first split the uuids actually and just find it in uuidhistory
+# TODO: NOTE I need to make sure to actually just the original id; ideally I want to keep both though; but matching should use the origin; or have only origin_id but then have metadata information which taxonomy was used [for future] --> metadata should be: model/taxonomy id, uuid of the model
+# NOTE consider that I should consider changing bert files to be the south african taxonomy!!! since that's also what users will do
+# NOTE push for compass to actually use south african taxonomy for main study
+
 # TODO Note that BERT taxonomy files don't have uuid history, so need to check if uuids will match correctly with Compass identified uuids
 
 # TODO think about qualifications and opportunity_requirements
@@ -24,11 +33,16 @@ import re
 # possibly have to add South African qulifications manually, similar to matric bit in; opportunity_requirements can get quite complicated though (include employment status, criminal record, driver's license, own car, matric only a few months go etc.)
 # South African NQF doesn't perfectly map onto EQF, since EQF only has 8 levels: https://www.saqa.org.za/wp-content/uploads/2023/02/National-Qualifications-Framework.pdf
 
+
 # ── LOAD MAPPINGS ────────────────────────────────────────────────────────────
-taxonomy_dir = Path("C:/Users/jasmi/Documents/GitHub/tabiya-livelihoods-classifier/inference/files")
-OCC_MAP_PATH = taxonomy_dir / "occupations_augmented.csv"
-SKILL_MAP_PATH = taxonomy_dir / "skills.csv"
-#QUAL_MAP_PATH = taxonomy_dir / "qualifications.csv" # decided not to use qualifications for now + anyway this doesn't include South African ones
+bert_taxonomy_dir = Path("C:/Users/jasmi/Documents/GitHub/tabiya-livelihoods-classifier/inference/files")
+OCC_MAP_PATH = bert_taxonomy_dir / "occupations_augmented.csv"
+SKILL_MAP_PATH = bert_taxonomy_dir / "skills.csv"
+#QUAL_MAP_PATH = bert_taxonomy_dir / "qualifications.csv" # decided not to use qualifications for now + anyway this doesn't include South African ones
+tabiya_taxonomy_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/Tabiya ESCO adapted")
+SKILL_NEWUUID_PATH = tabiya_taxonomy_dir / "skills.csv"
+SKILLHIERARCHY_PATH = tabiya_taxonomy_dir / "skill_hierarchy.csv"
+SKILLGROUP_PATH = tabiya_taxonomy_dir / "skill_groups.csv"
 
 def load_id_label_mapping(csv_path: Path) -> dict[str, str]:
     """
@@ -103,6 +117,55 @@ valid_occupation_uuids = load_valid_uuids(OCC_MAP_PATH, column_name="uuid")
 valid_skill_uuids      = load_valid_uuids(SKILL_MAP_PATH, column_name="uuid")
 print(f"Found {len(valid_occupation_uuids)} valid occupation UUIDs.")
 print(f"Found {len(valid_skill_uuids)} valid skill UUIDs.")
+
+# Reshape uuid history in tabiya skills taxonomy so that old uuid is available for mapping
+# TODO change into just searching for id in uuid history OR splitting it but then searching across all split variables
+def reshape_uuid_history(file_path: str) -> pd.DataFrame:
+    """
+    Loads a CSV file, processes the 'UUIDHISTORY' column to split newline-separated
+    UUIDs into separate columns, and returns the transformed DataFrame.
+
+    Args:
+        file_path (str): The path to the input CSV file.
+
+    Returns:
+        pd.DataFrame: A new DataFrame with UUIDs in separate columns.
+                      Returns an empty DataFrame if the file or column is not found.
+    """
+    try:
+        # Load the CSV file into a pandas DataFrame
+        df = pd.read_csv(file_path)
+
+        # Check if the 'UUIDHISTORY' column exists
+        if 'UUIDHISTORY' not in df.columns:
+            print("Error: 'UUIDHISTORY' column not found in the CSV file.")
+            return pd.DataFrame()
+
+        # Fill any potential missing values (NaN) in 'UUIDHISTORY' with an empty string
+        # to prevent errors during the split operation.
+        df['UUIDHISTORY'] = df['UUIDHISTORY'].fillna('')
+
+        # Split the 'UUIDHISTORY' column by the newline character ('\n').
+        # The `expand=True` argument creates a new DataFrame from the split strings,
+        # where each part of the split becomes a new column.
+        uuid_columns = df['UUIDHISTORY'].str.split('\n', expand=True)
+
+        # Create meaningful names for the new UUID columns, e.g., 'UUID_1', 'UUID_2', etc.
+        # The number of new columns will be determined by the maximum number of UUIDs
+        # found in any single cell in the 'UUIDHISTORY' column.
+        uuid_columns.columns = [f'UUID_{i+1}' for i in range(uuid_columns.shape[1])]
+
+        # Concatenate the new UUID columns with the original DataFrame.
+        # We drop the original 'UUIDHISTORY' column as it's now redundant.
+        result_df = pd.concat([df.drop('UUIDHISTORY', axis=1), uuid_columns], axis=1)
+
+        return result_df
+    
+# Change uuid to newest uuid that compass also uses
+# TODO
+
+# map to skillgroup (one level up), and save that + its uuid in a separate list
+# TODO
 
 # ── PARSE FUNCTIONS ──────────────────────────────────────────────────────────
 def _normalise_retrieved(value: Any) -> List[str]:
@@ -406,7 +469,7 @@ if __name__ == "__main__":
     base_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study")
 
     # File paths
-    csv_file_path = base_dir / "BERT_extracted_occupations_skills_uuid.csv"  # Your CSV file path  
+    csv_file_path = base_dir / "BERT_extracted_occupations_skills_uuid.csv"  # Your CSV file path
     output_json_path = base_dir / "bert_cleaned.json"  # Output JSON file
   
     # First, preview the transformation

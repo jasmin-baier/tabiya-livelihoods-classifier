@@ -108,6 +108,7 @@ class EntityLinker:
 
         # Load precomputed embeddings for the reference sets
         self.occupation_emb, self.skill_emb, self.qualification_emb = self._load_tensors()
+        self.job_counter = 0
 
 
     def __call__(self, text: str, linking: bool = True) -> List[dict]:
@@ -138,6 +139,9 @@ class EntityLinker:
             - `scores`: A list of cosine similarity scores between the extracted entity and the retrieved items.
                 Appear if linking=True and evaluation_mode=True.
         """
+        # --- Add counter ---
+        self.job_counter += 1
+        print(f"--- Processing Job Number: {self.job_counter} ---")
 
         # Replace newlines in the text with spaces
         if isinstance(text, str):
