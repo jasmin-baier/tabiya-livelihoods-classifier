@@ -10,7 +10,8 @@ import vertexai
 from google.api_core import exceptions as google_exceptions
 from vertexai.generative_models import GenerationConfig, GenerativeModel
 
-# TODO IMPORTANT: Need to give it occupation descriptions as well
+# TODO IMPORTANT: Need to give it occupation descriptions as well, as the model misunderstood "ambassador"
+# TODO before final full job runs, handle duplicates better in beginning of pipeline
 
 # ============================================================================
 # 1. SETUP & CONFIGURATION
@@ -46,14 +47,48 @@ def save_results_to_file(all_responses: List[Dict[str, Any]], output_file: Path)
 # ============================================================================
 # 2. PROMPT CREATION (No changes needed here)
 # ============================================================================
-def create_occupation_prompt(full_details: str, potential_occupations: List[str]) -> str:
-    occupations_text = "\n".join([f"- {occ}" for occ in potential_occupations])
+def create_occupation_prompt(full_details: str, potential_occupations: List[Dict[str, str]]) -> str:
+    """
+    Creates a prompt for the LLM, including both occupation labels and their descriptions.
+    """
+    # Format each occupation with its description for clarity in the prompt
+    occupations_text = "\n".join(
+        [f"- **{occ['label']}**: {occ['description']}" for occ in potential_occupations if occ.get('label')]
+    )
+    
     return f"""You are an expert job placement specialist.
-    Based on the following opportunity details and list of potential occupations, your task is to identify the most suitable occupation.
-    **Opportunity Details:**\n---\n{full_details}\n---\n**Potential Occupations:**\n{occupations_text}
-    **Instructions:**\n1.  Carefully analyze the opportunity details.\n2.  Rank all the potential occupations from most to least likely to be the best fit.\n3.  From your top three ranked occupations, choose the single one that best represents the core function of the opportunity.\n4.  Provide clear, concise reasoning for your final choice, referencing specific parts of the opportunity details.\n5.  Output the results in a valid JSON format as specified below. Do not add any text or markdown formatting outside of the JSON block.
-    Do not make up any skills, unless there are none provided. If there is a list provided, only use those.
-    **Example JSON Output:**\n```json\n{{\n  "ranked_occupations": [\n    {{"occupation": "Software Engineer", "rank": 1}},\n    {{"occupation": "Data Scientist", "rank": 2}}\n  ],\n  "final_choice": {{\n    "occupation": "Software Engineer",\n    "reasoning": "The description's primary focus on designing, developing, and maintaining software systems aligns directly with the core responsibilities of a Software Engineer role."\n  }}\n}}\n```"""
+    Based on the following opportunity details and a list of potential occupations with their official descriptions, your task is to identify the most suitable occupation.
+
+    **Opportunity Details:**
+    ---
+    {full_details}
+    ---
+
+    **Potential Occupations with Descriptions:**
+    {occupations_text}
+
+    **Instructions:**
+    1.  Carefully analyze the opportunity details against the provided occupation descriptions.
+    2.  Rank all the potential occupations from most to least likely to be the best fit.
+    3.  From your top-ranked occupations, choose the single one that best represents the core function of the opportunity.
+    4.  Provide clear, concise reasoning for your final choice, referencing specific parts of the opportunity details and how they align with the official occupation description.
+    5.  Output the results in a valid JSON format as specified below. Do not add any text or markdown formatting outside of the JSON block.
+    
+    Do not make up any occupations, unless there are none provided. If there is a list provided, only use those.
+
+    **Example JSON Output:**
+    ```json
+    {{
+      "ranked_occupations": [
+        {{"occupation": "Software Engineer", "rank": 1}},
+        {{"occupation": "Data Scientist", "rank": 2}}
+      ],
+      "final_choice": {{
+        "occupation": "Software Engineer",
+        "reasoning": "The description's primary focus on 'designing, developing, and maintaining software systems' aligns directly with the core responsibilities of a Software Engineer, as opposed to the statistical analysis focus of a Data Scientist."
+      }}
+    }}
+    ```"""
 
 def create_skills_prompt(full_details: str, potential_skills: List[str], potential_skill_requirements: List[str]) -> str:
     combined_skills = sorted(list(set(potential_skills + potential_skill_requirements)))
@@ -91,7 +126,7 @@ def create_skills_prompt(full_details: str, potential_skills: List[str], potenti
     "Commercial Driver's License (CDL)",
     "Clean Driving Record"
   ],
-  "top_5_important_skills": [
+  "top_important_skills": [
     "Customer Service",
     "Time Management",
     "Communication",
@@ -154,6 +189,7 @@ def process_single_job(
     base_response = {
         "opportunity_group_id": opportunity_group_id, "opportunity_ref_id": opportunity_ref_id, "opportunity_title": opportunity_title
     }
+    
     if process_type == 'skills':
         if not job_data.get('potential_skills') and not job_data.get('potential_skill_requirements'):
             logging.warning(f"Skipping SKILLS for {opportunity_ref_id}: No potential skills provided.")
@@ -163,15 +199,29 @@ def process_single_job(
             job_data['full_details'], job_data.get('potential_skills', []), job_data.get('potential_skill_requirements', [])
         )
     elif process_type == 'occupations':
-        if not job_data.get('potential_occupations'):
+        # Combine labels and descriptions into a list of dictionaries
+        occ_labels = job_data.get('potential_occupations', [])
+        occ_descriptions = job_data.get('potential_occupations_descriptions', [])
+        
+        if not occ_labels:
             logging.warning(f"Skipping OCCUPATION for {opportunity_ref_id}: No potential occupations provided.")
             base_response.update({"error": "Skipped", "error_details": "No potential occupations in input."})
             return base_response, False
+            
+        # Ensure descriptions list is the same length as labels, padding with empty strings if necessary
+        occ_descriptions.extend([''] * (len(occ_labels) - len(occ_descriptions)))
+        
+        combined_occupations = [
+            {'label': label, 'description': desc}
+            for label, desc in zip(occ_labels, occ_descriptions)
+        ]
+        
         prompt_text = create_occupation_prompt(
-            job_data['full_details'], job_data['potential_occupations']
+            job_data['full_details'], combined_occupations
         )
     else:
         raise ValueError("Invalid process_type specified.")
+        
     try:
         logging.info(f"Generating LLM response for {opportunity_ref_id}...")
         response_text = call_vertexai_with_retry(client, prompt_text, config)
@@ -179,10 +229,12 @@ def process_single_job(
         logging.error(f"Generation failed for {opportunity_ref_id} after all retries: {e}")
         base_response.update({"error": "Generation failed", "error_details": str(e)})
         return base_response, False
+        
     parsed_data, is_valid = parse_llm_response(response_text)
     if not is_valid:
         base_response.update(parsed_data)
         return base_response, False
+        
     logging.info(f"Successfully processed {opportunity_ref_id}.")
     base_response.update(parsed_data)
     return base_response, True
@@ -256,33 +308,70 @@ def process_all_jobs(
             logging.warning(f"  - {job['opportunity_ref_id']}: {job['opportunity_title']} ({job['error']}: {str(error_details)[:200]})") # Truncate long errors
     logging.info(f"\nFinal results are saved in: {output_file}\n{'='*60}")
 
+# ============================================================================
+# EXECUTION SCRIPT
+# ============================================================================
+
 if __name__ == "__main__":
     CONFIG = {
         "base_dir": Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study"),
         #"input_file_name": "bert_cleaned.json",
-        #"input_file_name": "bert_cleaned_subset250.json",
-        "input_file_name": "bert_cleaned_subset6.json",
+        "input_file_name": "bert_cleaned_subset250.json",
+        #"input_file_name": "bert_cleaned_subset6.json",
         #"input_file_name": "bert_cleaned_subset1.json",
         "model_name": "gemini-2.5-pro", # Use a valid Vertex AI model name
         "project": "ihu-access",
         "location": "global", # Or a specific region like "us-central1"
-        "temperature": 0.5,
+        "temperature": 0.3,
         "top_p": 0.95,
         "max_output_tokens": 8192,
+        "max_reruns": 5,
     }
 
-    # Execute Occupation Reranking
-    process_all_jobs(
-        input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
-        output_file=CONFIG['base_dir'] / "job_responses_occupations_robust.json",
+    def run_with_retry(process_type, input_file, output_file, config):
+        # First, get the total number of jobs to process
+        total_jobs = 0
+        with open(input_file, 'rb') as f:
+            for _ in ijson.items(f, 'item'):
+                total_jobs += 1
+        logging.info(f"Found {total_jobs} total jobs in {input_file.name} for {process_type} processing.")
+
+        rerun_count = 0
+        while rerun_count < config["max_reruns"]:
+            process_all_jobs(
+                input_file=input_file,
+                output_file=output_file,
+                process_type=process_type,
+                config=config
+            )
+
+            # Check if all jobs were processed successfully
+            final_results, processed_ids = load_or_initialize_results(output_file)
+            
+            if len(processed_ids) >= total_jobs:
+                logging.info(f"All {total_jobs} jobs successfully processed for {process_type}. Run complete.")
+                break
+            else:
+                rerun_count += 1
+                logging.warning(f"Run {rerun_count}/{config['max_reruns']} incomplete. {len(processed_ids)}/{total_jobs} jobs processed.")
+                logging.warning("There are still unprocessed jobs. Retrying in 10 seconds...")
+                time.sleep(10)
+        else:
+             logging.error(f"Max reruns reached for {process_type}, but not all jobs were processed. Please check for persistent errors.")
+
+
+    # --- Execute Occupation Reranking with Retry Logic ---
+    run_with_retry(
         process_type='occupations',
+        input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
+        output_file=CONFIG['base_dir'] / "job_responses_occupations_with_desc.json",
         config=CONFIG
     )
 
-    # Execute Skills Reranking
-    process_all_jobs(
-        input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
-        output_file=CONFIG['base_dir'] / "job_responses_skills_robust.json",
+    # --- Execute Skills Reranking with Retry Logic ---
+    run_with_retry(
         process_type='skills',
+        input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
+        output_file=CONFIG['base_dir'] / "job_responses_skills_with_desc.json",
         config=CONFIG
     )
