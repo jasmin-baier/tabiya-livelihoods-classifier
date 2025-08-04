@@ -10,7 +10,9 @@ import vertexai
 from google.api_core import exceptions as google_exceptions
 from vertexai.generative_models import GenerationConfig, GenerativeModel
 
-# NOTE HAVE TO RERUN BERT TO DISCOVER FEWER SKILLS PER TOKEN BEFORE I CAN USE THIS SCRIPT
+# TODO IMPORTANT: Need to give it occupation descriptions as well, as the model misunderstood "ambassador"
+# TODO before final full job runs, handle duplicates better in beginning of pipeline
+
 
 # ============================================================================
 # 1. SETUP & CONFIGURATION
@@ -46,13 +48,13 @@ def save_results_to_file(all_responses: List[Dict[str, Any]], output_file: Path)
 # ============================================================================
 # 2. PROMPT CREATION (No changes needed here)
 # ============================================================================
-def create_occupation_prompt(full_details: str, potential_occupations: List[Dict[str, str]]) -> str:
+def create_occupation_prompt(full_details: str, potential_occupation_groups: List[Dict[str, str]]) -> str:
     """
     Creates a prompt for the LLM, including both occupation labels and their descriptions.
     """
     # Format each occupation with its description for clarity in the prompt
     occupations_text = "\n".join(
-        [f"- **{occ['label']}**: {occ['description']}" for occ in potential_occupations if occ.get('label')]
+        [f"- **{occ['label']}**: {occ['description']}" for occ in potential_occupation_groups if occ.get('label')]
     )
     
     return f"""You are an expert job placement specialist.
@@ -89,13 +91,9 @@ def create_occupation_prompt(full_details: str, potential_occupations: List[Dict
     }}
     ```"""
 
-def create_skills_prompt(full_details: str, potential_skills: List[Dict[str, str]]) -> str:
-    """
-    Creates a prompt for the LLM, including both skill labels and their descriptions.
-    """
-    skills_text = "\n".join(
-        [f"- **{skill['label']}**: {skill['description']}" for skill in potential_skills if skill.get('label')]
-    )
+def create_skills_prompt(full_details: str, potential_skill_groups: List[str], potential_skill_requirements_groups: List[str]) -> str:
+    combined_skills = sorted(list(set(potential_skill_groups + potential_skill_requirements_groups)))
+    skills_text = "\n".join([f"- {sk}" for sk in combined_skills])
     
     return f"""You are an expert technical recruiter with deep knowledge of the job market. Your task is to analyze a job opportunity and categorize skills based on the employer's needs at the time of application.
 
@@ -104,16 +102,22 @@ def create_skills_prompt(full_details: str, potential_skills: List[Dict[str, str
 {full_details}
 ---
 
-**List of Potential Skills with Descriptions to Choose From:**
+**List of Potential Skills to Choose From:**
 {skills_text}
 
 **Instructions:**
 1.  **Analyze the Role**: Carefully read the opportunity details to understand what the employer is looking for in an applicant *at the time of application*.
-2.  **Identify "Required Skills"**: From the provided list, select only the skills that an employer **needs to see in a candidate to even consider hiring them**. These are the non-negotiable, "must-have" prerequisites. Use the skill descriptions to make an accurate assessment.
-3.  **Identify "Important Skills"**: From the provided list, select the skills that **would make an applicant stronger** or more competitive. These are desirable, "nice-to-have" skills. Please return a good number of important skills, ordered from most to least important. Use your judgement to decide which and how many are relevant.
+
+2.  **Identify "Required Skills"**: From the provided list, select only the skills that an employer **needs to see in a candidate to even consider hiring them**. These are the non-negotiable, "must-have" prerequisites.
+
+3.  **Identify "Important Skills"**: From the provided list, select the skills that **would make an applicant stronger** or more competitive. These are desirable, "nice-to-have" skills. Please return the a good number of important skills, ordered from most to least important. Use your judgement to decide which and how many are relevant.
+
 4.  **Exclude "On-the-Job" Skills**: Crucially, **do not include skills that the job ad states or implies will be taught or developed after hiring**. Your focus is strictly on the requirements at the point of application.
+
 5.  **Handle Entry-Level Roles**: If there are no clear prerequisites (e.g., for a learnership), it is correct to return an empty list for `required_skills`.
-6.  **Use Provided List Only**: Do not make up any skills. You must only choose from the list of potential skills provided. Return only the skill label, not the description.
+
+6.  **Use Provided List Only**: Do not make up any skills. You must only choose from the list of potential skills provided.
+
 7.  **Strict JSON Output**: Format your response as a single, valid JSON object. Do not include any explanatory text or markdown formatting outside of the JSON block.
 
 **Example JSON Output:**
@@ -179,7 +183,6 @@ def process_single_job(
     job_data: Dict[str, Any],
     config: GenerationConfig,
     process_type: str,
-    debug_flag: bool = False # Flag to control the debug print
 ) -> Tuple[Dict[str, Any], bool]:
     opportunity_group_id = job_data['opportunity_group_id']
     opportunity_ref_id = job_data['opportunity_ref_id']
@@ -189,43 +192,24 @@ def process_single_job(
     }
     
     if process_type == 'skills':
-        skill_labels = job_data.get('potential_skills', []) + job_data.get('potential_skill_requirements', [])
-        skill_descriptions = job_data.get('potential_skills_descriptions', []) + job_data.get('potential_skill_requirements_descriptions', [])
-
-        if not skill_labels:
+        if not job_data.get('potential_skill_groups') and not job_data.get('potential_skill_requirements_groups'):
             logging.warning(f"Skipping SKILLS for {opportunity_ref_id}: No potential skills provided.")
             base_response.update({"error": "Skipped", "error_details": "No potential skills in input."})
             return base_response, False
-
-        skill_descriptions.extend([''] * (len(skill_labels) - len(skill_descriptions)))
-        
-        combined_skills_unique = {}
-        for label, desc in zip(skill_labels, skill_descriptions):
-            if label not in combined_skills_unique:
-                combined_skills_unique[label] = {'label': label, 'description': desc}
-
         prompt_text = create_skills_prompt(
-            job_data['full_details'], list(combined_skills_unique.values())
+            job_data['full_details'], job_data.get('potential_skill_groups', []), job_data.get('potential_skill_requirements_groups', [])
         )
-
-        # --- DEBUGGING STEP ---
-        if debug_flag:
-            print("\n" + "="*50 + " DEBUG: SKILLS PROMPT " + "="*50)
-            print(prompt_text)
-            print("="*120)
-            input("^^^ This is the prompt for the first job. Press Enter to continue the script...")
-            # This ensures the debug only runs once by returning True, which will set the flag to False in the calling function
-            return {}, True 
-
     elif process_type == 'occupations':
-        occ_labels = job_data.get('potential_occupations', [])
-        occ_descriptions = job_data.get('potential_occupations_descriptions', [])
+        # Combine labels and descriptions into a list of dictionaries
+        occ_labels = job_data.get('potential_occupation_groups', [])
+        occ_descriptions = job_data.get('potential_occupation_group_descriptions', [])
         
         if not occ_labels:
             logging.warning(f"Skipping OCCUPATION for {opportunity_ref_id}: No potential occupations provided.")
             base_response.update({"error": "Skipped", "error_details": "No potential occupations in input."})
             return base_response, False
             
+        # Ensure descriptions list is the same length as labels, padding with empty strings if necessary
         occ_descriptions.extend([''] * (len(occ_labels) - len(occ_descriptions)))
         
         combined_occupations = [
@@ -287,8 +271,6 @@ def process_all_jobs(
     
     # --- Main Loop: Reads one job at a time from the file ---
     processed_count = 0
-    debug_has_run = False
-
     with open(input_file, 'rb') as f: # Must open in binary mode for ijson
         # Create an iterator that yields one job object at a time
         jobs_iterator = ijson.items(f, 'item')
@@ -304,14 +286,7 @@ def process_all_jobs(
                 logging.info(f"Job {job_ref_id} has already been processed. Skipping.")
                 continue
 
-            # Pass the debug flag; it will be True only if it's the skills process and hasn't run yet
-            should_debug = (process_type == 'skills' and not debug_has_run)
-            response, is_valid = process_single_job(client, job_data, generation_config, process_type, debug_flag=should_debug)
-            
-            # If the debug step ran, it returns an empty dict and we set the flag to True
-            if should_debug:
-                debug_has_run = True
-                continue # Skip to the next job
+            response, is_valid = process_single_job(client, job_data, generation_config, process_type)
             
             # Add or update the response in our map and save incrementally
             response_map[job_ref_id] = response
@@ -342,7 +317,7 @@ if __name__ == "__main__":
     CONFIG = {
         "base_dir": Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study"),
         #"input_file_name": "bert_cleaned.json",
-        "input_file_name": "bert_cleaned_subset250_fewerskillsfordesc.json", # HAVE TO RERUN BERT TO DISCOVER FEWER SKILLS PER TOKEN BEFORE I CAN USE THIS SCRIPT
+        "input_file_name": "bert_cleaned_subset250.json",
         #"input_file_name": "bert_cleaned_subset6.json",
         #"input_file_name": "bert_cleaned_subset1.json",
         "model_name": "gemini-2.5-pro", # Use a valid Vertex AI model name
@@ -390,7 +365,7 @@ if __name__ == "__main__":
     run_with_retry(
         process_type='occupations',
         input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
-        output_file=CONFIG['base_dir'] / "job_responses_occupations_version-oppdescskillsdesc.json",
+        output_file=CONFIG['base_dir'] / "job_responses_occupations_with_desc.json",
         config=CONFIG
     )
 
@@ -398,6 +373,6 @@ if __name__ == "__main__":
     run_with_retry(
         process_type='skills',
         input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
-        output_file=CONFIG['base_dir'] / "job_responses_skills_version-oppdescskillsdesc.json",
+        output_file=CONFIG['base_dir'] / "job_responses_skills_with_desc.json",
         config=CONFIG
     )
