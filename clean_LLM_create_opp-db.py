@@ -4,6 +4,7 @@
 # TODO Make sure to merge other job variables back in
 # TODO map back to uuids --> but the ones from tabiya taxonomy (in future make robust to changes in ids somehow)
 # TODO bring into correct structure as per Miro
+# TODO Duplicates: omg just pass the URL through as primary ID — but no even fewer unique one's here...have to check what is going on
 
 import pandas as pd
 import json
