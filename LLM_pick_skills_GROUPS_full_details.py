@@ -10,7 +10,6 @@ import vertexai
 from google.api_core import exceptions as google_exceptions
 from vertexai.generative_models import GenerationConfig, GenerativeModel
 
-# TODO IMPORTANT: Need to give it occupation descriptions as well, as the model misunderstood "ambassador"
 # TODO before final full job runs, handle duplicates better in beginning of pipeline
 
 
@@ -316,7 +315,7 @@ def process_all_jobs(
 if __name__ == "__main__":
     CONFIG = {
         "base_dir": Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study"),
-        #"input_file_name": "bert_cleaned.json",
+        #"input_file_name": "bert_cleaned_withgroups.json",
         "input_file_name": "bert_cleaned_subset250.json",
         #"input_file_name": "bert_cleaned_subset6.json",
         #"input_file_name": "bert_cleaned_subset1.json",
@@ -365,7 +364,7 @@ if __name__ == "__main__":
     run_with_retry(
         process_type='occupations',
         input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
-        output_file=CONFIG['base_dir'] / "job_responses_occupations_with_desc.json",
+        output_file=CONFIG['base_dir'] / "job_responses_occupations_groups.json",
         config=CONFIG
     )
 
@@ -373,6 +372,6 @@ if __name__ == "__main__":
     run_with_retry(
         process_type='skills',
         input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
-        output_file=CONFIG['base_dir'] / "job_responses_skills_with_desc.json",
+        output_file=CONFIG['base_dir'] / "job_responses_skills_groups.json",
         config=CONFIG
     )
