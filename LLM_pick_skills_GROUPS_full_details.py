@@ -38,11 +38,21 @@ def load_or_initialize_results(output_file: Path) -> Tuple[List[Dict[str, Any]],
     return [], set()
 
 def save_results_to_file(all_responses: List[Dict[str, Any]], output_file: Path):
+    """
+    Safely writes data by using a temporary file and an atomic rename.
+    This prevents file corruption if the script is interrupted during a write.
+    """
+    temp_file = output_file.with_suffix(output_file.suffix + '.tmp')
     try:
-        with open(output_file, 'w', encoding='utf-8') as f:
+        with open(temp_file, 'w', encoding='utf-8') as f:
             json.dump(all_responses, f, indent=2, ensure_ascii=False)
+        # The atomic operation: if this is interrupted, the original file is still intact.
+        temp_file.rename(output_file)
     except Exception as e:
         logging.error(f"FATAL: Could not save results to {output_file}. Error: {e}")
+        # Clean up the temporary file on failure
+        if temp_file.exists():
+            temp_file.unlink()
 
 # ============================================================================
 # 2. PROMPT CREATION (No changes needed here)
