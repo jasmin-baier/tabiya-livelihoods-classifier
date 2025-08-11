@@ -24,13 +24,16 @@ LLM_pick_skills_full_details.py
 # STEP 7: Reshape LLM output and merge opportunity information back in
 clean_LLM_create_opp-db.py
 
+# STEP 8: Clean pre-existing jobseeker skillsets for jobseeker database
+reshape_jobseeker_database.py
+
 # Finally, run computation (will actually be one on cloud, so this file is just for testing)
 match_skills_compute.py
 
 
 # Things I could improve in the whole pipeline # Today July 30
 # In Bert cleaning, check if Bert found any occupations in job description, and move those over to the occupations list (delete duplicates)
-# In bert cleaning, add occupation parents to occupation list (but add directly, no need to run LLM twice here) PROBLEM: uuid in bert file is not same as in skill_hierarchy file
+# In bert cleaning, add occupation parents to occupation list (but add directly, no need to run LLM twice here) PROBLEM: uuid in bert file is not same as in skill_hierarchy filepip install ijson
 # In bert cleaning, add another list item with only the skill parent (delete duplicates) --> add to LLM script to use this instead
 
 

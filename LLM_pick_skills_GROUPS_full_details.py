@@ -39,20 +39,33 @@ def load_or_initialize_results(output_file: Path) -> Tuple[List[Dict[str, Any]],
 
 def save_results_to_file(all_responses: List[Dict[str, Any]], output_file: Path):
     """
-    Safely writes data by using a temporary file and an atomic rename.
-    This prevents file corruption if the script is interrupted during a write.
+    Safely writes data by using a temporary file and an atomic replace.
+    Includes retry logic to handle file locks from sync services like OneDrive.
     """
     temp_file = output_file.with_suffix(output_file.suffix + '.tmp')
-    try:
-        with open(temp_file, 'w', encoding='utf-8') as f:
-            json.dump(all_responses, f, indent=2, ensure_ascii=False)
-        # The atomic operation: if this is interrupted, the original file is still intact.
-        temp_file.rename(output_file)
-    except Exception as e:
-        logging.error(f"FATAL: Could not save results to {output_file}. Error: {e}")
-        # Clean up the temporary file on failure
-        if temp_file.exists():
-            temp_file.unlink()
+    
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(all_responses, f, indent=2, ensure_ascii=False)
+            
+            # The atomic operation: this will overwrite the destination file safely.
+            temp_file.replace(output_file)
+            
+            # If we get here, the save was successful, so we can exit the loop.
+            return # Exit the function successfully
+            
+        except Exception as e:
+            # Check if it's the specific error we're looking for, or any permission error
+            if attempt < max_retries - 1:
+                logging.warning(f"Save failed on attempt {attempt + 1}/{max_retries}. Retrying in 1 second. Error: {e}")
+                time.sleep(1) # Wait a moment for the other process (OneDrive) to release the lock
+            else:
+                logging.error(f"FATAL: Could not save results to {output_file} after {max_retries} attempts. Error: {e}")
+                # Clean up the temporary file on final failure
+                if temp_file.exists():
+                    temp_file.unlink()
 
 # ============================================================================
 # 2. PROMPT CREATION (No changes needed here)
