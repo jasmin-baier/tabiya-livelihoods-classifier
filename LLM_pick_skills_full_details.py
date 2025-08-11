@@ -360,12 +360,12 @@ if __name__ == "__main__":
 
 
     # --- Execute Occupation Reranking with Retry Logic ---
-    run_with_retry(
-        process_type='occupations',
-        input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
-        output_file=CONFIG['base_dir'] / "job_responses_occupations_version-oppdescskillsno.json",
-        config=CONFIG
-    )
+    #run_with_retry(
+    #    process_type='occupations',
+    #    input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
+    #    output_file=CONFIG['base_dir'] / "job_responses_occupations_version-oppdescskillsno.json",
+    #    config=CONFIG
+    #)
 
     # --- Execute Skills Reranking with Retry Logic ---
     run_with_retry(
