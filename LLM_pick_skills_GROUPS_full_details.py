@@ -142,6 +142,8 @@ def create_skills_prompt(full_details: str, potential_skill_groups: List[str], p
 
 7.  **Strict JSON Output**: Format your response as a single, valid JSON object. Do not include any explanatory text or markdown formatting outside of the JSON block.
 
+8.  **Verbatim Matching**: The skill strings you return in the JSON output **must be an exact, verbatim copy** of a skill from the provided list. Do not alter the skill in any way (e.g., do not change 'Project Management' to 'project_management'). **Skills with underscores are invalid and must be ignored.**
+
 **Example JSON Output:**
 ```json
 {{

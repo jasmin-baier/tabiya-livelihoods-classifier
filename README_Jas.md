@@ -24,6 +24,12 @@ LLM_pick_skills_full_details.py
 # STEP 7: Reshape LLM output and merge opportunity information back in
 clean_LLM_create_opp-db.py
 
+# STEP 7.5: For robustness, double check the pilot database for any jobs that couldn't map the skills to uuids. 
+debug_find_jobs_hallucinated_skills.py
+# STEP 7.6: Then rerun LLM file with that bert_cleaned_rerun json
+LLM_pick_skills_full_details_rerun.py
+
+
 # STEP 8: Clean pre-existing jobseeker skillsets for jobseeker database
 reshape_jobseeker_database.py
 

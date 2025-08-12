@@ -10,7 +10,7 @@ import vertexai
 from google.api_core import exceptions as google_exceptions
 from vertexai.generative_models import GenerationConfig, GenerativeModel
 
-# TODO before final full job runs, handle duplicates better in beginning of pipeline
+# NOTE: This file already takes the bert_cleaned_rerun.json as input AND has an altered "process_all_jobs"-function which makes sure the jobs are actually re-processed despite not having had an error previously
 
 # ============================================================================
 # 1. SETUP & CONFIGURATION
@@ -292,10 +292,16 @@ def process_all_jobs(
     all_responses, processed_ids = load_or_initialize_results(output_file)
     response_map = {res['opportunity_ref_id']: res for res in all_responses}
     
+    # --- NEW: Get the IDs of all jobs you intend to run/rerun ---
+    with open(input_file, 'rb') as f:
+        # Using ijson here is memory-efficient for potentially large rerun files
+        ids_to_rerun = {item['opportunity_ref_id'] for item in ijson.items(f, 'item') if 'opportunity_ref_id' in item}
+    logging.info(f"Identified {len(ids_to_rerun)} job IDs in '{input_file.name}' marked for processing.")
+    # -----------------------------------------------------------------
+
     # --- Main Loop: Reads one job at a time from the file ---
     processed_count = 0
-    with open(input_file, 'rb') as f: # Must open in binary mode for ijson
-        # Create an iterator that yields one job object at a time
+    with open(input_file, 'rb') as f:
         jobs_iterator = ijson.items(f, 'item')
         
         for i, job_data in enumerate(jobs_iterator, 1):
@@ -305,9 +311,15 @@ def process_all_jobs(
 
             logging.info(f"\n--- Processing job {i} ({job_ref_id}: {job_title}) ---")
 
-            if job_ref_id in processed_ids:
-                logging.info(f"Job {job_ref_id} has already been processed. Skipping.")
+            # --- MODIFIED: Change the skip condition ---
+            if job_ref_id in processed_ids and job_ref_id not in ids_to_rerun:
+                logging.info(f"Job {job_ref_id} has already been processed and is not in the rerun list. Skipping.")
                 continue
+            # ---------------------------------------------
+            
+            # This is a good place to add a log if you are intentionally reprocessing
+            if job_ref_id in processed_ids and job_ref_id in ids_to_rerun:
+                logging.warning(f"Job {job_ref_id} was already processed but is in the rerun list. RE-PROCESSING.")
 
             response, is_valid = process_single_job(client, job_data, generation_config, process_type)
             
@@ -339,10 +351,7 @@ def process_all_jobs(
 if __name__ == "__main__":
     CONFIG = {
         "base_dir": Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study"),
-        "input_file_name": "bert_cleaned.json",
-        #"input_file_name": "bert_cleaned_subset250.json",
-        #"input_file_name": "bert_cleaned_subset6.json",
-        #"input_file_name": "bert_cleaned_subset1.json",
+        "input_file_name": "bert_cleaned_rerun.json",
         "model_name": "gemini-2.5-pro", # Use a valid Vertex AI model name
         "project": "ihu-access",
         "location": "global", # Or a specific region like "us-central1"

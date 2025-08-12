@@ -34,7 +34,7 @@ def restructure_skills_data(input_path, output_path):
 
             # --- Process UUIDs ---
             # This block handles cases where 'uuid' might be a single string or a list of strings.
-            uuids = record.get("uuid")
+            uuids = record.get("origin_uuid")
             uuid_list = []
             if isinstance(uuids, list):
                 uuid_list = uuids
