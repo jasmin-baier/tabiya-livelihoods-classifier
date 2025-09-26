@@ -38,8 +38,10 @@ match_skills_simple.py
 # Match based on path structure, using manual weights for types of distances (direct match, same hierarchy, related)
 match_skills_path_manual_weights.py
 # Computationally driven path distances
+# must install dependencies before running
+pip install -r requirements.txt
 match_skills_path_node_embedding.py
-
+# Econ theory driven matching "surplus approach"
 
 # A script that translates final databases to skill_groups and occupation_groups to try matching then -- but note that here the LLM PICKING happened still at the lower level
 map_DBs_to_groups.py

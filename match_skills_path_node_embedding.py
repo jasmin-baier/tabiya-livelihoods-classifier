@@ -3,17 +3,27 @@ import json
 import networkx as nx
 import numpy as np
 import os
-from node2vec import Node2Vec
-from gensim.models import Word2Vec
-from tqdm import tqdm # Import tqdm for a progress bar
+import argparse # Import argparse for command-line arguments
+from sklearn.metrics.pairwise import cosine_similarity
+from tqdm import tqdm
 
 # NOTE: change jobseeker and opportunity data paths at the bottom if needed
 #    TAXONOMY_DATA_PATH = './taxonomy' 
 #    MAIN_DATA_PATH = 'C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study'
+# remove _extract , and change opp db to pilot_opportunity_database_unique.json
 
-# This suppresses a deprecation warning from the underlying gensim library
-import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+# --- NEW IMPORTS for PyTorch Geometric ---
+# Make sure you have PyTorch and PyG installed
+try:
+    import torch
+    from torch_geometric.nn import Node2Vec
+except ImportError:
+    print("\nPyTorch or PyTorch Geometric not found.")
+    print("Please install them. For most systems (without a dedicated NVIDIA GPU):")
+    print("pip install torch")
+    print("pip install torch_geometric")
+    print("\nFor systems with a GPU, please see the PyTorch website for specific installation instructions.")
+    exit()
 
 def load_data(taxonomy_path='.', main_data_path='.'):
     """
@@ -26,10 +36,9 @@ def load_data(taxonomy_path='.', main_data_path='.'):
         skill_relations = pd.read_csv(os.path.join(taxonomy_path, 'skill_to_skill_relations.csv'))
         skills = pd.read_csv(os.path.join(taxonomy_path, 'skills.csv'))
 
-        # Load main data files (jobseekers, opportunities) from the main_data_path
-        with open(os.path.join(main_data_path, 'pilot_jobseeker_database.json'), 'r') as f:
+        with open(os.path.join(main_data_path, 'pilot_jobseeker_database.json'), 'r', encoding='utf-8') as f:
             jobseekers = json.load(f)
-        with open(os.path.join(main_data_path, 'pilot_opportunity_database.json'), 'r') as f:
+        with open(os.path.join(main_data_path, 'pilot_opportunity_database_unique.json'), 'r', encoding='utf-8') as f:
             opportunities = json.load(f)
 
         print("Datasets loaded successfully.")
@@ -37,23 +46,23 @@ def load_data(taxonomy_path='.', main_data_path='.'):
     except FileNotFoundError as e:
         print(f"Error loading files: {e}. Make sure your file paths are correct.")
         return None, None, None, None, None
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON: {e}. One of your JSON files might be corrupted.")
+        return None, None, None, None, None
 
 def create_uuid_to_id_map(skills_df):
     """
     Creates a dictionary to map historical UUIDs to the canonical skill ID.
-    This is the crucial step to bridge the gap between transactional data and the taxonomy.
     """
     print("Creating UUID to ID mapping...")
     uuid_map = {}
-    # Drop rows where UUIDHISTORY is missing, as they cannot be mapped.
     skills_df = skills_df.dropna(subset=['ID', 'UUIDHISTORY'])
     
     for _, row in skills_df.iterrows():
         canonical_id = row['ID']
-        # The UUIDs are stored in a newline-separated string.
         uuids = row['UUIDHISTORY'].strip().split('\n')
         for uuid in uuids:
-            if uuid: # Ensure we don't map empty strings
+            if uuid:
                 uuid_map[uuid.strip()] = canonical_id
                 
     print(f"Map created with {len(uuid_map)} UUID entries.")
@@ -61,43 +70,98 @@ def create_uuid_to_id_map(skills_df):
 
 def build_unweighted_skill_graph(skills_df, hierarchy_df, relations_df):
     """
-    Builds an unweighted graph for the Node2Vec algorithm.
-    The algorithm learns the edge weights (relationships) from the graph's topology.
+    Builds an unweighted graph and creates mappings for PyG.
     """
-    print("Building the unweighted skill taxonomy graph for embedding...")
+    print("Building the unweighted skill taxonomy graph...")
     G = nx.Graph()
 
-    # Add all skills as nodes using the canonical 'ID'
-    for _, skill in skills_df.iterrows():
-        G.add_node(skill['ID'])
+    node_list = skills_df['ID'].unique().tolist()
+    node_to_idx = {node_id: i for i, node_id in enumerate(node_list)}
+    
+    for node_id in node_list:
+        G.add_node(node_to_idx[node_id])
 
-    # Add hierarchical relationships
     for _, row in hierarchy_df.iterrows():
-        if G.has_node(row['PARENTID']) and G.has_node(row['CHILDID']):
-            G.add_edge(row['PARENTID'], row['CHILDID'])
+        parent = node_to_idx.get(row['PARENTID'])
+        child = node_to_idx.get(row['CHILDID'])
+        if parent is not None and child is not None:
+            G.add_edge(parent, child)
 
-    # Add "related" skill relationships
     for _, row in relations_df.iterrows():
-        if G.has_node(row['REQUIRINGID']) and G.has_node(row['REQUIREDID']):
-            G.add_edge(row['REQUIRINGID'], row['REQUIREDID'])
+        requiring = node_to_idx.get(row['REQUIRINGID'])
+        required = node_to_idx.get(row['REQUIREDID'])
+        if requiring is not None and required is not None:
+            G.add_edge(requiring, required)
             
     print(f"Graph built with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
-    return G
+    return G, node_to_idx, node_list
 
-def train_skill_embedding_model(graph):
+def train_and_save_model(graph, node_to_idx, model_path, map_path):
     """
-    Trains a Node2Vec model to learn vector representations of skills.
-    This is where the machine learning happens. The model "walks" the graph
-    to understand how skills are related.
+    Trains a Node2Vec model and saves it along with the node mapping.
     """
-    print("Training skill embedding model... (This may take a few minutes)")
-    # Node2Vec parameters are crucial. These are sensible defaults.
-    node2vec = Node2Vec(graph, dimensions=64, walk_length=30, num_walks=200, workers=4)
-    
-    model = node2vec.fit(window=10, min_count=1, batch_words=4)
-    
+    print("Training skill embedding model with PyTorch Geometric...")
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Using device: {device}")
+
+    edge_index = torch.tensor(list(graph.edges)).t().contiguous()
+
+    model = Node2Vec(
+        edge_index, embedding_dim=64, walk_length=30, context_size=10,
+        walks_per_node=20, num_negative_samples=1, p=1.0, q=1.0, sparse=True,
+    ).to(device)
+
+    loader = model.loader(batch_size=128, shuffle=True, num_workers=0)
+    optimizer = torch.optim.SparseAdam(list(model.parameters()), lr=0.01)
+
+    model.train()
+    for epoch in range(1, 51):
+        total_loss = 0
+        for pos_rw, neg_rw in tqdm(loader, desc=f"Epoch {epoch}/50"):
+            optimizer.zero_grad()
+            loss = model.loss(pos_rw.to(device), neg_rw.to(device))
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+        print(f"Loss: {total_loss / len(loader):.4f}")
+
     print("Model training complete.")
+    
+    # --- SAVE THE MODEL AND MAPPING ---
+    print("Saving model and mappings...")
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    torch.save(model.state_dict(), model_path)
+    with open(map_path, 'w') as f:
+        json.dump(node_to_idx, f)
+    print(f"Model saved to {model_path}")
+    print(f"Node map saved to {map_path}")
+    
     return model
+
+def load_embedding_model(graph, model_path, map_path):
+    """
+    Loads a pre-trained Node2Vec model and its node mapping.
+    """
+    print("Loading pre-trained model and mappings...")
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    with open(map_path, 'r') as f:
+        node_to_idx = json.load(f)
+        
+    edge_index = torch.tensor(list(graph.edges)).t().contiguous()
+    
+    # Re-initialize model with the same architecture
+    model = Node2Vec(
+        edge_index, embedding_dim=64, walk_length=30, context_size=10,
+        walks_per_node=20, num_negative_samples=1, p=1.0, q=1.0, sparse=True,
+    ).to(device)
+    
+    # Load the saved weights
+    model.load_state_dict(torch.load(model_path))
+    model.eval() # Set model to evaluation mode
+    
+    print("Model and mappings loaded successfully.")
+    return model, node_to_idx
 
 def get_jobseeker_skills_uuid(jobseeker_data):
     """Extracts a simple list of skill UUIDs from a jobseeker's record."""
@@ -109,41 +173,54 @@ def get_opportunity_skills_uuid(opportunity_data):
         return []
     return [skill['uuid'] for skill in opportunity_data.get('skills', []) if skill.get('uuid')]
 
-def calculate_embedding_match_score(jobseeker_skill_ids, opportunity_skill_ids, model):
+def pre_process_entities_for_embedding(entities, id_getter_func, uuid_map, model, node_to_idx):
     """
-    Calculates a match score based on the cosine similarity between the learned skill vectors.
-    This function now expects lists of canonical IDs, not UUIDs.
+    Pre-processes entities to fetch their skill vectors from the loaded/trained model.
     """
-    if not opportunity_skill_ids:
+    print(f"Pre-processing entities to fetch skill vectors...")
+    entity_vectors = {}
+    with torch.no_grad():
+        all_embeddings = model.embedding.weight.cpu().numpy()
+
+    for entity in tqdm(entities, desc="Fetching skill vectors"):
+        entity_id = entity.get(id_getter_func)
+        uuids = (get_jobseeker_skills_uuid(entity) if id_getter_func == 'compass_id' 
+                 else get_opportunity_skills_uuid(entity))
+        
+        skill_ids = [uuid_map[uuid] for uuid in uuids if uuid in uuid_map]
+        valid_skill_indices = [node_to_idx[s_id] for s_id in skill_ids if s_id in node_to_idx]
+        
+        if valid_skill_indices:
+            entity_vectors[entity_id] = all_embeddings[valid_skill_indices]
+        else:
+            entity_vectors[entity_id] = np.array([])
+            
+    return entity_vectors
+
+def calculate_embedding_match_score(jobseeker_vectors, opportunity_vectors):
+    """
+    Calculates a match score using vectorized cosine similarity.
+    """
+    if jobseeker_vectors.size == 0 or opportunity_vectors.size == 0:
         return 0.0
-
-    model_vocab = model.wv.key_to_index.keys()
-    
-    # Filter skills to only those present in our trained model's vocabulary
-    valid_jobseeker_skills = [s_id for s_id in jobseeker_skill_ids if s_id in model_vocab]
-    valid_opportunity_skills = [s_id for s_id in opportunity_skill_ids if s_id in model_vocab]
-    
-    if not valid_jobseeker_skills or not valid_opportunity_skills:
-        return 0.0
-
-    total_similarity = 0.0
-    for req_skill_id in valid_opportunity_skills:
-        similarities = [model.wv.similarity(req_skill_id, js_skill_id) for js_skill_id in valid_jobseeker_skills]
-        max_sim_for_skill = max(similarities) if similarities else 0.0
-        total_similarity += max_sim_for_skill
-
-    avg_similarity = total_similarity / len(valid_opportunity_skills)
+    similarity_matrix = cosine_similarity(opportunity_vectors, jobseeker_vectors)
+    max_sim_per_req_skill = similarity_matrix.max(axis=1)
+    avg_similarity = max_sim_per_req_skill.mean()
     return avg_similarity
 
-def run_full_analysis_embedding(all_jobseekers, all_opportunities, model, threshold, uuid_map, output_path):
+def run_full_analysis_embedding(all_jobseekers, all_opportunities, model, threshold, uuid_map, node_to_idx, output_path):
     """
-    Calculates scores for all jobseeker-opportunity pairs using the embedding model and saves results.
+    Calculates scores for all jobseeker-opportunity pairs.
     """
-    print("Running full analysis for all jobseekers using embedding model...")
-    detailed_scores = []
-    aggregate_summaries = []
+    jobseeker_skill_vectors = pre_process_entities_for_embedding(all_jobseekers, 'compass_id', uuid_map, model, node_to_idx)
+    opportunity_skill_vectors = pre_process_entities_for_embedding(all_opportunities, 'opportunity_ref_id', uuid_map, model, node_to_idx)
 
-    opportunities_with_skills = [opp for opp in all_opportunities if get_opportunity_skills_uuid(opp)]
+    print("\nRunning full analysis for all jobseekers using embedding model...")
+    detailed_scores, aggregate_summaries = [], []
+
+    opportunities_with_skills = {
+        opp_id: vectors for opp_id, vectors in opportunity_skill_vectors.items() if vectors.size > 0
+    }
     total_opportunities_considered = len(opportunities_with_skills)
 
     if total_opportunities_considered == 0:
@@ -152,53 +229,36 @@ def run_full_analysis_embedding(all_jobseekers, all_opportunities, model, thresh
 
     for jobseeker in tqdm(all_jobseekers, desc="Processing Jobseekers"):
         jobseeker_id = jobseeker.get('compass_id')
-        jobseeker_uuids = get_jobseeker_skills_uuid(jobseeker)
-        # Translate UUIDs to canonical IDs using the map
-        jobseeker_skill_ids = [uuid_map[uuid] for uuid in jobseeker_uuids if uuid in uuid_map]
-        
-        if not jobseeker_skill_ids:
-            summary = {
-                'jobseeker_id': jobseeker_id,
-                'opportunities_matched': 0,
-                'total_opportunities_considered': total_opportunities_considered,
-                'aggregate_match_percent': 0.0
-            }
-            aggregate_summaries.append(summary)
+        js_vectors = jobseeker_skill_vectors.get(jobseeker_id)
+
+        if js_vectors is None or js_vectors.size == 0:
+            aggregate_summaries.append({
+                'jobseeker_id': jobseeker_id, 'opportunities_matched': 0,
+                'total_opportunities_considered': total_opportunities_considered, 'aggregate_match_percent': 0.0
+            })
             continue
 
         match_count = 0
-        for opp in opportunities_with_skills:
-            opp_id = opp.get('opportunity_ref_id')
-            opp_uuids = get_opportunity_skills_uuid(opp)
-            # Translate UUIDs to canonical IDs using the map
-            opp_skill_ids = [uuid_map[uuid] for uuid in opp_uuids if uuid in uuid_map]
-            
-            score = calculate_embedding_match_score(jobseeker_skill_ids, opp_skill_ids, model)
-            
+        for opp_id, opp_vectors in opportunities_with_skills.items():
+            score = calculate_embedding_match_score(js_vectors, opp_vectors)
             detailed_scores.append({
-                'jobseeker_id': jobseeker_id,
-                'opportunity_id': opp_id,
-                'match_score': score
+                'jobseeker_id': jobseeker_id, 'opportunity_id': opp_id, 'match_score': score
             })
-            
             if score >= threshold:
                 match_count += 1
         
         percentage_match = (match_count / total_opportunities_considered) * 100
         aggregate_summaries.append({
-            'jobseeker_id': jobseeker_id,
-            'opportunities_matched': match_count,
-            'total_opportunities_considered': total_opportunities_considered,
-            'aggregate_match_percent': percentage_match
+            'jobseeker_id': jobseeker_id, 'opportunities_matched': match_count,
+            'total_opportunities_considered': total_opportunities_considered, 'aggregate_match_percent': percentage_match
         })
 
     print("\nSaving results to CSV files...")
     scores_df = pd.DataFrame(detailed_scores)
     summary_df = pd.DataFrame(aggregate_summaries)
 
-    # Construct the full output paths using the provided output_path
-    scores_output_path = os.path.join(output_path, 'jobseeker_opportunity_scores_embedding.csv')
-    summary_output_path = os.path.join(output_path, 'jobseeker_aggregate_summary_embedding.csv')
+    scores_output_path = os.path.join(output_path, 'jobseeker_opportunity_scores_embedding_pyg.csv')
+    summary_output_path = os.path.join(output_path, 'jobseeker_aggregate_summary_embedding_pyg.csv')
 
     scores_df.to_csv(scores_output_path, index=False)
     summary_df.to_csv(summary_output_path, index=False)
@@ -208,32 +268,41 @@ def run_full_analysis_embedding(all_jobseekers, all_opportunities, model, thresh
 
 def main():
     """Main execution function."""
+    parser = argparse.ArgumentParser(description="Run skill matching with a Node2Vec model.")
+    parser.add_argument("--retrain", action="store_true", help="Force the model to be retrained, even if a saved version exists.")
+    args = parser.parse_args()
+
     # --- Define File Paths ---
     TAXONOMY_DATA_PATH = './taxonomy' 
     MAIN_DATA_PATH = 'C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study'
+    MODEL_ARTIFACTS_PATH = './trained_model'
+    MODEL_PATH = os.path.join(MODEL_ARTIFACTS_PATH, 'skill_embedding_model.pt')
+    NODE_MAP_PATH = os.path.join(MODEL_ARTIFACTS_PATH, 'node_to_idx.json')
 
     skills_df, hierarchy_df, relations_df, jobseekers, opportunities = load_data(
-        taxonomy_path=TAXONOMY_DATA_PATH,
-        main_data_path=MAIN_DATA_PATH
+        taxonomy_path=TAXONOMY_DATA_PATH, main_data_path=MAIN_DATA_PATH
     )
-    
     if skills_df is None: return
 
-    # Create the UUID-to-ID mapping
     uuid_to_id_map = create_uuid_to_id_map(skills_df)
-
-    skill_graph = build_unweighted_skill_graph(skills_df, hierarchy_df, relations_df)
+    skill_graph, node_to_idx, _ = build_unweighted_skill_graph(skills_df, hierarchy_df, relations_df)
     
-    embedding_model = train_skill_embedding_model(skill_graph)
-    
+    # --- CORE LOGIC: Train or Load Model ---
+    if args.retrain or not os.path.exists(MODEL_PATH):
+        print("\n--- Training new model ---")
+        embedding_model = train_and_save_model(skill_graph, node_to_idx, MODEL_PATH, NODE_MAP_PATH)
+        # We use the node_to_idx generated during training
+    else:
+        print("\n--- Loading existing model ---")
+        embedding_model, node_to_idx = load_embedding_model(skill_graph, MODEL_PATH, NODE_MAP_PATH)
+        
     if not jobseekers or not opportunities:
         print("No jobseekers or opportunities to analyze.")
         return
         
-    # A cosine similarity of 0.75 is a common threshold for a "strong" match.
     MATCH_THRESHOLD = 0.75
 
-    run_full_analysis_embedding(jobseekers, opportunities, embedding_model, MATCH_THRESHOLD, uuid_to_id_map, MAIN_DATA_PATH)
+    run_full_analysis_embedding(jobseekers, opportunities, embedding_model, MATCH_THRESHOLD, uuid_to_id_map, node_to_idx, MAIN_DATA_PATH)
     print("\n--- Analysis Complete ---")
 
 if __name__ == "__main__":

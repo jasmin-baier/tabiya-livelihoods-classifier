@@ -5,6 +5,9 @@ from inference.linker import EntityLinker
 # TODO this doesn't currently move over all other job columns, like date posted etc.
 # TODO: I am using  extracted_skills2 & extracted_requirements in other files now, so might as well drop extracted_skills 1, but I haven't done rigorous check of differences
 # TODO Once I have a finalized version, need to make more efficient by only extracting from jobs I haven't already done so; either to recognize in this file, or earlier and only providing new jobs, and appending to database in clean form later
+# TODO check with Apostolos, is it true that bert only checks first 100 words?
+
+# NOTE: I adapted linker.py; I added a counter
 
 # Initialize the entity linker
 pipeline = EntityLinker(k=25, output_format='uuid') # for occupations, get 25

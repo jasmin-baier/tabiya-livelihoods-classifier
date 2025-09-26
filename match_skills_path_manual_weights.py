@@ -20,9 +20,9 @@ def load_data(taxonomy_path='.', main_data_path='.'):
         skills = pd.read_csv(os.path.join(taxonomy_path, 'skills.csv'))
 
         # Load main data files (jobseekers, opportunities) from the main_data_path
-        with open(os.path.join(main_data_path, 'pilot_jobseeker_database.json'), 'r') as f:
+        with open(os.path.join(main_data_path, 'pilot_jobseeker_database.json'), 'r', encoding='utf-8') as f:
             jobseekers = json.load(f)
-        with open(os.path.join(main_data_path, 'pilot_opportunity_database.json'), 'r') as f:
+        with open(os.path.join(main_data_path, 'pilot_opportunity_database_unique.json'), 'r', encoding='utf-8') as f:
             opportunities = json.load(f)
 
         print("Datasets loaded successfully.")
@@ -75,6 +75,17 @@ def build_weighted_skill_graph(skills_df, hierarchy_df, relations_df):
     print(f"Graph built with {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.")
     return G
 
+def precompute_all_shortest_paths(graph):
+    """
+    Pre-computes all shortest path lengths and stores them in a dictionary for fast lookup.
+    This is the key optimization step.
+    """
+    print("Pre-computing all skill-to-skill distances... (This may take a moment)")
+    # This function returns a dictionary of dictionaries: {source: {target: distance}}
+    all_distances = dict(nx.all_pairs_dijkstra_path_length(graph, weight='weight'))
+    print("Distance computation complete.")
+    return all_distances
+
 def get_jobseeker_skills_uuid(jobseeker_data):
     """Extracts a simple list of skill UUIDs from a jobseeker's record."""
     return [skill['uuid'] for skill in jobseeker_data.get('skills', []) if skill.get('uuid')]
@@ -85,29 +96,32 @@ def get_opportunity_skills_uuid(opportunity_data):
         return []
     return [skill['uuid'] for skill in opportunity_data.get('skills', []) if skill.get('uuid')]
 
-def calculate_manual_match_score(jobseeker_skill_ids, opportunity_skill_ids, graph, max_dist=5.0):
+def calculate_manual_match_score(jobseeker_skill_ids, opportunity_skill_ids, distances, max_dist=5.0):
     """
-    Calculates a match score based on shortest path distance in the weighted graph.
-    The score is an inverse of the distance, normalized by the max_dist.
+    Calculates a match score using the pre-computed distances for fast lookups.
     """
     if not opportunity_skill_ids:
         return 0.0
 
     total_score = 0.0
     
-    valid_jobseeker_skills = [s_id for s_id in jobseeker_skill_ids if s_id in graph]
-    valid_opportunity_skills = [s_id for s_id in opportunity_skill_ids if s_id in graph]
+    # Filter skills to only those that exist in our distance map (i.e., were in the graph)
+    valid_jobseeker_skills = [s_id for s_id in jobseeker_skill_ids if s_id in distances]
+    valid_opportunity_skills = [s_id for s_id in opportunity_skill_ids if s_id in distances]
 
     if not valid_jobseeker_skills or not valid_opportunity_skills:
         return 0.0
 
     for req_skill_id in valid_opportunity_skills:
         min_dist = float('inf')
+        # This loop now uses fast dictionary lookups instead of slow graph searches
         for js_skill_id in valid_jobseeker_skills:
+            # The distance from a skill to itself is 0
             if req_skill_id == js_skill_id:
                 dist = 0.0
-            elif nx.has_path(graph, source=js_skill_id, target=req_skill_id):
-                dist = nx.shortest_path_length(graph, source=js_skill_id, target=req_skill_id, weight='weight')
+            # Check if a path exists by looking up the target in the source's distance dict
+            elif req_skill_id in distances[js_skill_id]:
+                dist = distances[js_skill_id][req_skill_id]
             else:
                 dist = float('inf')
             
@@ -121,7 +135,7 @@ def calculate_manual_match_score(jobseeker_skill_ids, opportunity_skill_ids, gra
     avg_score = total_score / len(valid_opportunity_skills)
     return avg_score
 
-def run_full_analysis_manual(all_jobseekers, all_opportunities, graph, threshold, uuid_map, output_path):
+def run_full_analysis_manual(all_jobseekers, all_opportunities, graph, distances, threshold, uuid_map, output_path):
     """
     Calculates scores for all jobseeker-opportunity pairs using the manual weighted model and saves results.
     """
@@ -156,7 +170,8 @@ def run_full_analysis_manual(all_jobseekers, all_opportunities, graph, threshold
             opp_uuids = get_opportunity_skills_uuid(opp)
             opp_skill_ids = [uuid_map[uuid] for uuid in opp_uuids if uuid in uuid_map]
             
-            score = calculate_manual_match_score(jobseeker_skill_ids, opp_skill_ids, graph)
+            # Pass the pre-computed distances to the scoring function
+            score = calculate_manual_match_score(jobseeker_skill_ids, opp_skill_ids, distances)
             
             detailed_scores.append({
                 'jobseeker_id': jobseeker_id,
@@ -204,6 +219,9 @@ def main():
     uuid_to_id_map = create_uuid_to_id_map(skills_df)
     skill_graph = build_weighted_skill_graph(skills_df, hierarchy_df, relations_df)
     
+    # --- KEY CHANGE: Pre-compute distances ---
+    all_skill_distances = precompute_all_shortest_paths(skill_graph)
+    
     if not jobseekers or not opportunities:
         print("No jobseekers or opportunities to analyze.")
         return
@@ -211,7 +229,8 @@ def main():
     # A score of 0.8 is a reasonable threshold for this distance-based approach.
     MATCH_THRESHOLD = 0.8
 
-    run_full_analysis_manual(jobseekers, opportunities, skill_graph, MATCH_THRESHOLD, uuid_to_id_map, MAIN_DATA_PATH)
+    # Pass the new 'all_skill_distances' dictionary to the analysis function
+    run_full_analysis_manual(jobseekers, opportunities, skill_graph, all_skill_distances, MATCH_THRESHOLD, uuid_to_id_map, MAIN_DATA_PATH)
     print("\n--- Analysis Complete ---")
 
 if __name__ == "__main__":
