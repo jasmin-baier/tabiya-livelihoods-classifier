@@ -340,8 +340,8 @@ def process_all_jobs(
 if __name__ == "__main__":
     CONFIG = {
         "base_dir": Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study"),
-        #"input_file_name": "bert_cleaned_withgroups.json",
-        "input_file_name": "bert_cleaned_subset250.json",
+        "input_file_name": "bert_cleaned_withgroups.json",
+        #"input_file_name": "bert_cleaned_subset250.json",
         #"input_file_name": "bert_cleaned_subset6.json",
         #"input_file_name": "bert_cleaned_subset1.json",
         "model_name": "gemini-2.5-pro", # Use a valid Vertex AI model name
@@ -386,12 +386,12 @@ if __name__ == "__main__":
 
 
     # --- Execute Occupation Reranking with Retry Logic ---
-    run_with_retry(
-        process_type='occupations',
-        input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
-        output_file=CONFIG['base_dir'] / "job_responses_occupations_groups.json",
-        config=CONFIG
-    )
+    #run_with_retry(
+    #    process_type='occupations',
+    #    input_file=CONFIG['base_dir'] / CONFIG['input_file_name'],
+    #    output_file=CONFIG['base_dir'] / "job_responses_occupations_groups.json",
+    #    config=CONFIG
+    #)
 
     # --- Execute Skills Reranking with Retry Logic ---
     run_with_retry(

@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Tuple
 from pathlib import Path
 import re
 
+# TODO: still consider adding all skills from occupation --> has to happen BEFORE the LLM step. This can be an alternative opp_db, similar how the skills_group version is an alternative opp_db
 # TODO: Now still using extracted_skills1, check if requirements are just a subset of skills 1; if yes OR more comprehensive, use extracted_skills2 & skill_requirements separately
 # TODO I have currently commented out all extra fields, in two places (e.g. date_posted etc) --> change once I decide how to pull these fields through the whole pipeline
 # TODO: opportunity DB should also have: when posted/when ends + and indicator if at date = today it is still relevant; or if it has been deleted (then also not relevant) --> for study consider keeping all relevant all the time to have larger number of jobs / have function that ensures there are at least 1000 jobs to compare to
@@ -15,11 +16,7 @@ import re
 # TODO output doesn't yet actually have all the columns I want
 
 # PRIORITY
-# TODO IMPORTANT: Need to give it occupation descriptions as well, and add that into LLM file also
-# TODO: Consider moving the LOAD MAPPINGS file paths and execution to the main at the bottom
-# TODO: For skill group mapping three steps: (1) find different / new uuids in skills file (2) find skillgroup uuid (parent) in skills_hierarchy (3) find skillgroup preferred label in skill_groups --> more robust if I don't first split the uuids actually and just find it in uuidhistory
 # TODO: NOTE I need to make sure to actually just the original id; ideally I want to keep both though; but matching should use the origin; or have only origin_id but then have metadata information which taxonomy was used [for future] --> metadata should be: model/taxonomy id, uuid of the model
-# NOTE consider that I should consider changing bert files to be the south african taxonomy!!! since that's also what users will do
 # NOTE push for compass to actually use south african taxonomy for main study
 
 # NOTE  that BERT taxonomy used oldest esco uuids (oldest in Compass uuid history)
@@ -40,7 +37,6 @@ import re
 # ============================================================================
 
 # --- Define File Paths ---
-# Adjust these paths to your local machine's structure
 # Tabiya South Africa Taxonomy (for labels, descriptions, etc.)
 tabiya_taxonomy_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/Tabiya South Africa v1.0.0")
 SKILLS_FULL_ENTITY_PATH = tabiya_taxonomy_dir / "skills.csv"
