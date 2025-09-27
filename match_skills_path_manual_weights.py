@@ -20,9 +20,9 @@ def load_data(taxonomy_path='.', main_data_path='.'):
         skills = pd.read_csv(os.path.join(taxonomy_path, 'skills.csv'))
 
         # Load main data files (jobseekers, opportunities) from the main_data_path
-        with open(os.path.join(main_data_path, 'pilot_jobseeker_database.json'), 'r', encoding='utf-8') as f:
+        with open(os.path.join(main_data_path, 'pilot_jobseeker_database.json'), 'r') as f:
             jobseekers = json.load(f)
-        with open(os.path.join(main_data_path, 'pilot_opportunity_database_unique.json'), 'r', encoding='utf-8') as f:
+        with open(os.path.join(main_data_path, 'pilot_opportunity_database_unique.json'), 'r') as f:
             opportunities = json.load(f)
 
         print("Datasets loaded successfully.")

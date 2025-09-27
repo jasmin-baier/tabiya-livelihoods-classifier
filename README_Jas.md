@@ -42,6 +42,9 @@ match_skills_path_manual_weights.py
 pip install -r requirements.txt
 match_skills_path_node_embedding.py
 # Econ theory driven matching "surplus approach"
+match_skills_path_node_surplus.py
+# This final one combines the surplus approach for market allocation (aggregate info I need) with the recommender approach by Bied et al.
+match_skills_path_node_surplus_and_biedetal.py
 
 # A script that translates final databases to skill_groups and occupation_groups to try matching then -- but note that here the LLM PICKING happened still at the lower level
 map_DBs_to_groups.py
