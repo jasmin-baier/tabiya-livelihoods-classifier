@@ -13,6 +13,7 @@ matplotlib.use("Agg")          # important on servers/headless; put BEFORE pyplo
 import matplotlib.pyplot as plt
 from pathlib import Path
 from decimal import Decimal
+from collections import Counter
 
 # NOTE: change jobseeker and opportunity data paths at the bottom if needed
 #    TAXONOMY_DATA_PATH = './taxonomy' 
@@ -43,7 +44,8 @@ def load_data(taxonomy_path='.', main_data_path='.'):
         skill_relations = pd.read_csv(os.path.join(taxonomy_path, 'skill_to_skill_relations.csv'))
         skills = pd.read_csv(os.path.join(taxonomy_path, 'skills.csv'))
 
-        with open(os.path.join(main_data_path, 'pilot_jobseeker_database.json'), 'r', encoding='utf-8') as f:
+        #with open(os.path.join(main_data_path, 'pilot_jobseeker_database.json'), 'r', encoding='utf-8') as f:
+        with open(os.path.join(main_data_path, '2025-09-26_pilot_compass_jobseeker_skills_reshaped.json'), 'r', encoding='utf-8') as f:
             jobseekers = json.load(f)
         with open(os.path.join(main_data_path, 'pilot_opportunity_database_unique.json'), 'r', encoding='utf-8') as f:
             opportunities = json.load(f)
@@ -56,6 +58,19 @@ def load_data(taxonomy_path='.', main_data_path='.'):
     except json.JSONDecodeError as e:
         print(f"Error decoding JSON: {e}. One of your JSON files might be corrupted.")
         return None, None, None, None, None
+
+def canonicalize_id(value):
+    """
+    Return (clean_string_id, kind) where kind ∈ {'numeric','alphanumeric','empty'}.
+    Never cast to int/float; preserve leading zeros and letters.
+    """
+    if value is None:
+        return None, 'empty'
+    s = str(value).strip()
+    if s == '' or s.lower() in {'nan', 'none'}:
+        return None, 'empty'
+    kind = 'alphanumeric' if re.search(r'\D', s) else 'numeric'
+    return s, kind
 
 def create_uuid_to_id_map(skills_df):
     """

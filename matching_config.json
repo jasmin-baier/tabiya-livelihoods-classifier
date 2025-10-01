@@ -1,0 +1,35 @@
+{
+  "uuid_source": "UUIDHISTORY last element preferred; fallback to ORIGINURI tail; else label.",
+  "taxonomy_dir": "C:\\Users\\jasmi\\Documents\\GitHub\\tabiya-livelihoods-classifier\\taxonomy",
+  "json_dir": "C:\\Users\\jasmi\\OneDrive - Nexus365\\Documents\\PhD - Oxford BSG\\Paper writing projects\\Ongoing\\Compass\\data\\pre_study",
+  "graph_edge_weights": {
+    "hierarchy": 1.0,
+    "skill_relation": 1.5
+  },
+  "kernel": "exp(-lambda * d)",
+  "lambda": 0.7,
+  "distance_cutoff": 3,
+  "group_recall_gate": 1,
+  "theta": {
+    "ess": 1.0,
+    "opt": 0.5,
+    "group": 0.2,
+    "gap_pen": 1.0
+  },
+  "phat": {
+    "cell_half_life_days": 30.0,
+    "job_half_life_days": 21.0,
+    "eb_alpha": 1.0,
+    "region_field_order": [
+      "province",
+      "city",
+      "country"
+    ],
+    "definition": "p_hat(job) = normalized OSI(occ,region) × job staleness decay"
+  },
+  "ui_thresholds": {
+    "Fit": 0.6,
+    "Safe": 0.4,
+    "Adjacent": 0.25
+  }
+}

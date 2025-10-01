@@ -35,21 +35,30 @@ UUID_REGEX = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-
 
 # ---------- Helpers (mostly unchanged) ----------
 def extract_uuid_from_uri(uri):
-    return uri.rsplit("/", 1)[-1] if isinstance(uri, str) else None
+    # Tail of ORIGINURI, lowercased
+    return uri.rsplit("/", 1)[-1].strip().lower() if isinstance(uri, str) else None
 
 def parse_last_uuid_from_history(val):
-    """Return the last UUID from UUIDHISTORY cell (JSON list or UUID-like tokens)."""
+    """
+    Return the *last* UUID from UUIDHISTORY. Works for:
+    - JSON arrays: '["uuid1","uuid2"]'
+    - newline/semicolon/pipe separated strings
+    - any mixed string containing multiple UUIDs
+    Always returns lowercased UUID or None.
+    """
     if val is None or (isinstance(val, float) and math.isnan(val)):
         return None
     s = str(val).strip()
     if not s:
         return None
+    # Try JSON list first
     try:
         obj = json.loads(s)
         if isinstance(obj, list) and obj:
-            return str(obj[-1]).strip()
+            return str(obj[-1]).strip().lower()
     except Exception:
         pass
+    # Fallback: regex all UUIDs, take the last
     matches = UUID_REGEX.findall(s)
     if matches:
         return matches[-1].lower()
@@ -109,54 +118,71 @@ def validate_required_files(taxonomy_dir: Path, json_dir: Path, jobseeker_file: 
 
 # ---------- Crosswalks with UUIDHISTORY ----------
 def build_crosswalks(skills_df, occs_df):
-    # Ensure optional columns exist
-    for col in ["UUIDHISTORY", "ORIGINURI", "SKILLTYPE", "PREFERREDLABEL", "ID"]:
+    # Ensure required/optional columns exist
+    for col in ["UUIDHISTORY", "ORIGINURI", "SKILLTYPE", "PREFERREDLABEL", "ALTLABELS", "ID"]:
         if col not in skills_df.columns:
-            if col in ("UUIDHISTORY", "ORIGINURI", "SKILLTYPE", "PREFERREDLABEL"):
-                skills_df[col] = ""
-            elif col == "ID":
+            skills_df[col] = "" if col != "ID" else None
+            if col == "ID":
                 raise KeyError("skills.csv is missing required column 'ID'")
     for col in ["UUIDHISTORY", "ORIGINURI", "PREFERREDLABEL", "ID"]:
         if col not in occs_df.columns:
-            if col in ("UUIDHISTORY", "ORIGINURI", "PREFERREDLABEL"):
-                occs_df[col] = ""
-            elif col == "ID":
+            occs_df[col] = "" if col != "ID" else None
+            if col == "ID":
                 raise KeyError("occupations.csv is missing required column 'ID'")
 
-    if "UUIDHISTORY" in skills_df.columns:
-        skills_df["SKILL_UUIDH"] = skills_df["UUIDHISTORY"].apply(parse_last_uuid_from_history)
-        skills_df["SKILL_UUID"]  = skills_df["SKILL_UUIDH"]
-    else:
-        skills_df["SKILL_UUID"]  = None
-    if "ORIGINURI" in skills_df.columns:
-        ori_uuid = skills_df["ORIGINURI"].map(extract_uuid_from_uri)
-        skills_df["SKILL_UUID"] = skills_df["SKILL_UUID"].fillna(ori_uuid)
+    # ---- Skills: UUID from LAST UUIDHISTORY element, fallback ORIGINURI tail; all lowercased
+    skills_df = skills_df.copy()
+    skills_df["SKILL_UUID"] = skills_df["UUIDHISTORY"].apply(parse_last_uuid_from_history)
+    skills_df.loc[skills_df["SKILL_UUID"].isna(), "SKILL_UUID"] = skills_df["ORIGINURI"].map(extract_uuid_from_uri)
 
-    skill_uuid_to_id = dict(zip(skills_df["SKILL_UUID"], skills_df["ID"]))
+    # Build uuid -> id dict, skipping null/empty keys
+    skill_uuid_to_id = {
+        _lower_or_none(u): sid
+        for u, sid in zip(skills_df["SKILL_UUID"], skills_df["ID"])
+        if _lower_or_none(u) is not None
+    }
+
+    # Labels (preferred + optional ALTLABELS)
     skill_label_to_ids = defaultdict(list)
-    for sid, lab in zip(
-        skills_df["ID"],
-        skills_df["PREFERREDLABEL"].fillna("").str.strip().str.lower()
-    ):
-        if lab:
-            skill_label_to_ids[lab].append(sid)
+    for sid, lab in zip(skills_df["ID"], skills_df["PREFERREDLABEL"].fillna("").astype(str)):
+        labn = lab.strip().lower()
+        if labn:
+            skill_label_to_ids[labn].append(sid)
+    if "ALTLABELS" in skills_df.columns:
+        for _, row in skills_df.iterrows():
+            sid = row["ID"]
+            alts = str(row.get("ALTLABELS") or "")
+            if not alts:
+                continue
+            # split on common separators
+            parts = None
+            for sep in ("|",";","\n",","):
+                if sep in alts:
+                    parts = [p.strip().lower() for p in alts.split(sep)]
+                    break
+            if parts is None:
+                parts = [alts.strip().lower()]
+            for a in parts:
+                if a:
+                    skill_label_to_ids[a].append(sid)
+
     skill_id_to_label = dict(zip(skills_df["ID"], skills_df["PREFERREDLABEL"].fillna("")))
     skill_id_to_type  = dict(zip(skills_df["ID"], skills_df.get("SKILLTYPE", pd.Series([""]*len(skills_df)))))
 
-    if "UUIDHISTORY" in occs_df.columns:
-        occs_df["OCC_UUIDH"] = occs_df["UUIDHISTORY"].apply(parse_last_uuid_from_history)
-        occs_df["OCC_UUID"]  = occs_df["OCC_UUIDH"]
-    else:
-        occs_df["OCC_UUID"]  = None
-    if "ORIGINURI" in occs_df.columns:
-        occ_ori_uuid = occs_df["ORIGINURI"].map(extract_uuid_from_uri)
-        occs_df["OCC_UUID"] = occs_df["OCC_UUID"].fillna(occ_ori_uuid)
+    # ---- Occupations: same normalisation
+    occs_df = occs_df.copy()
+    occs_df["OCC_UUID"] = occs_df["UUIDHISTORY"].apply(parse_last_uuid_from_history)
+    occs_df.loc[occs_df["OCC_UUID"].isna(), "OCC_UUID"] = occs_df["ORIGINURI"].map(extract_uuid_from_uri)
 
-    occ_uuid_to_id  = dict(zip(occs_df["OCC_UUID"], occs_df["ID"]))
+    occ_uuid_to_id = {
+        _lower_or_none(u): oid
+        for u, oid in zip(occs_df["OCC_UUID"], occs_df["ID"])
+        if _lower_or_none(u) is not None
+    }
     occ_label_to_id = {
-        (lab.strip().lower()): oid
+        (str(lab).strip().lower()): oid
         for oid, lab in zip(occs_df["ID"], occs_df["PREFERREDLABEL"].fillna(""))
-        if lab
+        if str(lab).strip()
     }
 
     return {
@@ -168,16 +194,21 @@ def build_crosswalks(skills_df, occs_df):
         "occ_label_to_id":   occ_label_to_id,
     }
 
+def _lower_or_none(x):
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return None
+    s = str(x).strip()
+    return s.lower() if s else None
+
 def _iter_uuid_values(u):
-    """Yield string UUIDs from str | dict | list values."""
-    if u is None:
+    if u is None: 
         return
     if isinstance(u, str):
-        yield u
+        yield u.strip().lower()
     elif isinstance(u, dict):
         cand = u.get("id") or u.get("uuid") or u.get("value")
         if isinstance(cand, str):
-            yield cand
+            yield cand.strip().lower()
     elif isinstance(u, list):
         for item in u:
             yield from _iter_uuid_values(item)
@@ -200,6 +231,35 @@ def _iter_label_values(l):
         for item in l:
             if isinstance(item, dict):
                 yield from _iter_label_values(item)
+
+def coerce_scalar_id(val):
+    """
+    Return a stable string id from possibly messy JSON:
+    - str/int/float -> str
+    - dict -> try 'id'/'uuid'/'value'
+    - list -> first non-empty item (recursively coerced)
+    - None/empty -> None
+    """
+    if val is None:
+        return None
+    if isinstance(val, (str, int, float)):
+        s = str(val).strip()
+        return s if s else None
+    if isinstance(val, dict):
+        for k in ("id", "uuid", "value", "opportunity_ref_id", "opportunity_group_id"):
+            v = val.get(k)
+            s = coerce_scalar_id(v)
+            if s:
+                return s
+        # fallback: stringified dict (stable enough for local runs)
+        return json.dumps(val, sort_keys=True)
+    if isinstance(val, list):
+        for item in val:
+            s = coerce_scalar_id(item)
+            if s:
+                return s
+        return None
+    return str(val)
 
 def map_skill_uuid_or_label(entry, cw):
     # allow a plain string to mean "preferred_label"
@@ -234,6 +294,70 @@ def map_occ_uuid_or_label(entry, cw):
         if oid is not None:
             return oid
     return None
+
+def _extract_date_string(val):
+    """
+    Return an ISO-like 'YYYY-MM-DD' or 'YYYY-MM-DDTHH:MM:SS' from val if possible.
+    Handles str | int/float (unix ts) | dict | list.
+    """
+    if val is None:
+        return None
+    if isinstance(val, str):
+        m = re.search(r"\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?)?", val)
+        return m.group(0) if m else None
+    if isinstance(val, (int, float)):
+        try:
+            return datetime.datetime.utcfromtimestamp(float(val)).isoformat()
+        except Exception:
+            return None
+    if isinstance(val, dict):
+        for k in ("date", "value", "iso", "updated_at", "created_at", "date_posted", "date_closing"):
+            if k in val:
+                s = _extract_date_string(val[k])
+                if s:
+                    return s
+        # last resort: scan the whole dict as text
+        return _extract_date_string(json.dumps(val, ensure_ascii=False))
+    if isinstance(val, list):
+        for item in val:
+            s = _extract_date_string(item)
+            if s:
+                return s
+        return None
+    # fallback: best-effort regex on stringified value
+    s = str(val)
+    m = re.search(r"\d{4}-\d{2}-\d{2}(?:[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?)?", s)
+    return m.group(0) if m else None
+
+def days_since_any(*values):
+    """
+    Try several date-like inputs; return days since the earliest one we can parse.
+    Returns +inf if nothing is parseable.
+    """
+    best = None
+    today = datetime.datetime.utcnow().date()
+    for v in values:
+        ds = _extract_date_string(v)
+        if not ds:
+            continue
+        try:
+            if "T" in ds:
+                dt = datetime.datetime.fromisoformat(ds.replace("Z",""))
+                d  = dt.date()
+            else:
+                d  = datetime.date.fromisoformat(ds[:10])
+            if best is None or d < best:
+                best = d
+        except Exception:
+            continue
+    if best is None:
+        return float("inf")
+    return max(0, (today - best).days)
+
+def half_life_decay(days, half_life):
+    if math.isinf(days):
+        return 0.0
+    return math.exp(-math.log(2) * (days / half_life))
 
 # ---------- Graph & taxonomy ----------
 def build_graph(skills_df, skill_groups_df, skill_hier_df, skill_rel_df, skill_id_to_label):
@@ -417,7 +541,7 @@ def main():
 
     # Prepare opportunities (region + age_days for p̂)
     opps_prepared = []
-    for op in opps:
+    for idx, op in enumerate(opps):
         req_skill_ids = set()
         if op.get("skills"):
             skills_val = op.get("skills") or []
@@ -426,6 +550,7 @@ def main():
             for s in skills_val:
                 sid = map_skill_uuid_or_label(s, cw)
                 if sid: req_skill_ids.add(sid)
+
         occ = op.get("occupation") or {}
         occ_id = map_occ_uuid_or_label(occ, cw)
 
@@ -438,11 +563,24 @@ def main():
             opt_ids = set()
             req_ids = set(req_skill_ids)
 
-        age = days_since(op.get("date_posted") or op.get("updated_at"))
+        age = days_since_any(
+        op.get("updated_at"),
+        op.get("date_posted"),
+        op.get("created_at"),
+        op.get("date_closing"),
+        )
+
         region = pick_region(op)
 
+        job_id = (
+            coerce_scalar_id(op.get("opportunity_ref_id")) or
+            coerce_scalar_id(op.get("opportunity_group_id")) or
+            coerce_scalar_id(op.get("id")) or
+            f"job_{idx}"
+        )
+
         opps_prepared.append({
-            "job_id":   op.get("opportunity_ref_id") or op.get("opportunity_group_id") or op.get("id"),
+            "job_id":   job_id,  # <- always a string now
             "title":    op.get("opportunity_title"),
             "active":   bool(op.get("active", True)),
             "occ_id":   occ_id,
@@ -452,6 +590,7 @@ def main():
             "ess":      list(ess_ids),
             "opt":      list(opt_ids),
         })
+
 
     # Success proxy
     p_hat = build_success_proxy(opps_prepared)
