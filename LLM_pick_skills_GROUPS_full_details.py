@@ -11,6 +11,7 @@ from google.api_core import exceptions as google_exceptions
 from vertexai.generative_models import GenerationConfig, GenerativeModel
 
 # TODO before final full job runs, handle duplicates better in beginning of pipeline
+# TODO IMPORTANT: Have separate variables for uuid and originUUID
 
 
 # ============================================================================

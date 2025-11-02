@@ -11,6 +11,7 @@ from google.api_core import exceptions as google_exceptions
 from vertexai.generative_models import GenerationConfig, GenerativeModel
 
 # NOTE: This file already takes the bert_cleaned_rerun.json as input AND has an altered "process_all_jobs"-function which makes sure the jobs are actually re-processed despite not having had an error previously
+# TODO IMPORTANT: Have separate variables for uuid and originUUID
 
 # ============================================================================
 # 1. SETUP & CONFIGURATION

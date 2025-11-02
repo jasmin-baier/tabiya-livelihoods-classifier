@@ -1,4 +1,5 @@
 
+# TODO IMPORTANT: Have separate variables for uuid and originUUID
 # TODO Only keep final chosen occupation
 # TODO Also merge back on thos jobs that had 0 occupations/skills from bert (if at least one of them was non-zero it should be in LLM files)
 # TODO Make sure to merge other job variables back in

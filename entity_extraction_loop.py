@@ -2,6 +2,7 @@ import csv
 import pandas as pd
 from inference.linker import EntityLinker
 
+# TODO Essential vs optional: treat items in opportunity_requirements_text as “essential”; items that only appear in opportunity_description_text as “optional”.
 # TODO this doesn't currently move over all other job columns, like date posted etc.
 # TODO: I am using  extracted_skills2 & extracted_requirements in other files now, so might as well drop extracted_skills 1, but I haven't done rigorous check of differences
 # TODO Once I have a finalized version, need to make more efficient by only extracting from jobs I haven't already done so; either to recognize in this file, or earlier and only providing new jobs, and appending to database in clean form later
