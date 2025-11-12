@@ -1,13 +1,58 @@
 # NOTE: It is important that this script renames extracted_occupations and extracted_skills1 to "potential_occupations" and "potential_skills" for LLM file to work
 
-import pandas as pd
-import io
-import json
-import ast
-from typing import List, Dict, Any, Tuple
-from pathlib import Path
-import re
+"""
+2_2_clean_bert_results.py (improved)
 
+Improvements implemented (Nov 3, 2025):
+
+- Normalize UUID case everywhere (lower-case on input, maps, and filters).
+- Robust CSV reads as strings (`dtype=str`, `keep_default_na=False`) to avoid NaN coercion.
+- Safer row access using `.get()` with sensible defaults; skip rows with missing essential IDs.
+- `parse_extracted_items` now handles both single- and double-quoted "retrieved" payloads, plus list/dict inputs.
+- Group mapping dedupes by *parent ID* (not label/description) to keep label/description in sync.
+- Paths are configurable via argparse (no hard-coded Windows paths). Sensible defaults can be provided.
+- Logging (with --verbose) instead of print; optional tqdm progress if installed.
+- Append/skip mode: if `--append` and output exists, skip already processed opportunities
+  (keyed by (opportunity_group_id, opportunity_ref_id)) and only process new rows.
+- Deterministic ordering: UUID lists and group ID sets are sorted before mapping to labels/descriptions.
+- Hierarchy loader hardens to mixed-case/space headers by normalizing column names.
+- `build_identifier_map` lower-cases detected UUID-like tokens; adds the primary ID as a key and, if UUID-like,
+  also its lower-cased form.
+
+  How to run
+  python scripts/2_run_bert_classifier/2_2_clean_bert_results.py `
+  --taxonomy-dir "C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/Tabiya South Africa v1.0.1-rc.1" `
+  --input-csv "C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study/2025-11-04_BERT_extracted_occupations_skills_uuid.csv" `
+  --output-json "C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study/bert_cleaned.json" `
+  --apped `
+  -v
+
+
+use --append to skip already processed opportunities in the output file (optional and not necessary on first run)
+Add -v for verbose logs.
+tqdm is optional for progress bars
+
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+import pandas as pd
+
+# tqdm is optional
+try:
+    from tqdm import tqdm
+except Exception:  # pragma: no cover
+    tqdm = None  # type: ignore
+    
+
+# TODO check new names from line 410, change in LLM file
 # TODO: still consider adding all skills from occupation --> has to happen BEFORE the LLM step. This can be an alternative opp_db, similar how the skills_group version is an alternative opp_db
 # TODO: Now still using extracted_skills1, check if requirements are just a subset of skills 1; if yes OR more comprehensive, use extracted_skills2 & skill_requirements separately
 # TODO I have currently commented out all extra fields, in two places (e.g. date_posted etc) --> change once I decide how to pull these fields through the whole pipeline
@@ -32,327 +77,444 @@ import re
 
 # NOTE: It is important that this script renames extracted_occupations and extracted_skills1 to "potential_occupations" and "potential_skills" for LLM file to work
 
-# ============================================================================
-# CONFIGURATION & DATA LOADING
-# ============================================================================
 
-# --- Define File Paths ---
-# Tabiya South Africa Taxonomy (for labels, descriptions, etc.)
-tabiya_taxonomy_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/Tabiya South Africa v1.0.0")
-SKILLS_FULL_ENTITY_PATH = tabiya_taxonomy_dir / "skills.csv"
-OCCUPATIONS_FULL_ENTITY_PATH = tabiya_taxonomy_dir / "occupations.csv"
-SKILLHIERARCHY_PATH = tabiya_taxonomy_dir / "skill_hierarchy.csv"
-SKILLGROUP_PATH = tabiya_taxonomy_dir / "skill_groups.csv"
-OCCHIERARCHY_PATH = tabiya_taxonomy_dir / "occupation_hierarchy.csv"
-OCCGROUP_PATH = tabiya_taxonomy_dir / "occupation_groups.csv"
+# ---------------------------------------------------------------------------
+# Constants & helpers
+# ---------------------------------------------------------------------------
 
+UUID_PATTERN = re.compile(
+    r'[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', re.I
+)
 
-# --- Input/Output for the main transformation ---
-# This assumes the script is run from a location where it can see the data directory
-base_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study")
-BERT_RESULTS_CSV_PATH = base_dir / "BERT_extracted_occupations_skills_uuid.csv"
-OUTPUT_JSON_PATH = base_dir / "bert_cleaned_withgroups.json"
+def norm_uuid(s: Any) -> str:
+    """Normalize a UUID-like string: strip and lower. Non-strings -> ''."""
+    if not isinstance(s, str):
+        return ""
+    return s.strip().lower()
 
+def setup_logging(verbose: bool) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
+    # keep pandas/quieter libs calmer in DEBUG
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("matplotlib").setLevel(logging.WARNING)
 
-# A regular expression to robustly identify any UUID in a string.
-UUID_PATTERN = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}', re.I)
+# ---------------------------------------------------------------------------
+# Taxonomy loaders
+# ---------------------------------------------------------------------------
 
 def build_identifier_map(csv_path: Path) -> Dict[str, Dict[str, Any]]:
     """
-    Builds a dictionary that maps every found ID and UUID to its entire record (row).
-    This allows for flexible lookups of any data field (e.g., DESCRIPTION) for a given ID.
+    Build a dictionary mapping from any seen identifier token (UUIDs found in any cell,
+    plus values from a primary ID column if present) to the full record (row).
+    - UUID-like tokens are lower-cased.
+    - The 'primary id' column (ID or uuid) is also added as a key; if it looks like
+      a UUID, a lower-cased alias is added as well.
     """
     if not csv_path.exists():
-        print(f"Warning: File not found at {csv_path}. Skipping.")
+        logging.warning("File not found: %s", csv_path)
         return {}
-    
-    df = pd.read_csv(csv_path, dtype=str).fillna("")
-    print(f"Processing data from '{csv_path.name}'...")
 
-    possible_id_cols = ["ID", "uuid"]
+    df = pd.read_csv(csv_path, dtype=str, keep_default_na=False, na_values=[])
+    logging.info("Processing identifiers from '%s' (%d rows)...", csv_path.name, len(df))
+
+    possible_id_cols = ["ID", "uuid", "Uuid", "UUID"]
     id_col_name = next((col for col in possible_id_cols if col in df.columns), None)
-    if id_col_name:
-        print(f"Found primary id column '{id_col_name}'")
 
     mapping: Dict[str, Dict[str, Any]] = {}
     for _, row in df.iterrows():
         record = row.to_dict()
-        all_ids_in_row = set()
-
+        # 1) Collect UUID-like tokens found anywhere in the row
         for cell_value in row.values:
-            if isinstance(cell_value, str):
-                found_uuids = UUID_PATTERN.findall(cell_value)
-                for uuid in found_uuids:
-                    all_ids_in_row.add(uuid.lower())
-        
-        if id_col_name:
-            primary_id = row[id_col_name].strip()
-            if primary_id:
-                all_ids_in_row.add(primary_id)
+            if isinstance(cell_value, str) and cell_value:
+                for u in UUID_PATTERN.findall(cell_value):
+                    mapping[norm_uuid(u)] = record
 
-        for uid in all_ids_in_row:
-            if uid:
-                mapping[uid] = record
+        # 2) Also add the primary id value as a key (required for group_map lookups by numeric ID)
+        if id_col_name:
+            primary_id = str(row.get(id_col_name, "")).strip()
+            if primary_id:
+                mapping[primary_id] = record  # keep as-is (IDs may be numeric-like strings)
+                if UUID_PATTERN.fullmatch(primary_id):
+                    mapping[norm_uuid(primary_id)] = record  # UUID alias
+
     return mapping
+
 
 def build_hierarchy_map(csv_path: Path) -> Dict[str, str]:
     """
-    Builds a direct mapping from a child ID to its parent ID from a hierarchy CSV.
+    Build child->parent map from hierarchy CSV.
+    Header names are normalized to uppercase+stripped to be resilient.
     """
     if not csv_path.exists():
-        print(f"Warning: Hierarchy file not found at {csv_path}. Skipping.")
+        logging.warning("Hierarchy file not found: %s", csv_path)
         return {}
-    
-    df = pd.read_csv(csv_path, dtype=str)
-    print(f"Processing hierarchy from '{csv_path.name}'...")
-    hierarchy_map = {}
-    if 'CHILDID' in df.columns and 'PARENTID' in df.columns:
-        df.dropna(subset=['CHILDID', 'PARENTID'], inplace=True)
-        hierarchy_map = pd.Series(df.PARENTID.values, index=df.CHILDID).to_dict()
-    else:
-        print(f"Warning: 'CHILDID' or 'PARENTID' columns not found in {csv_path.name}")
-    
-    return hierarchy_map
 
-# ============================================================================
-# PARSING HELPER FUNCTIONS
-# ============================================================================
+    df = pd.read_csv(csv_path, dtype=str, keep_default_na=False, na_values=[])
+    # normalize headers
+    df.columns = [str(c).strip().upper() for c in df.columns]
 
-def _safe_load_literal(cell: Any):
-    """Try JSON, then literal_eval, else return the raw cell."""
+    if "CHILDID" not in df.columns or "PARENTID" not in df.columns:
+        logging.warning("Missing CHILDID/PARENTID columns in %s", csv_path.name)
+        return {}
+
+    df = df[(df["CHILDID"].astype(str) != "") & (df["PARENTID"].astype(str) != "")]
+    hier_map: Dict[str, str] = pd.Series(df["PARENTID"].values, index=df["CHILDID"]).to_dict()
+    logging.info("Loaded hierarchy from '%s' with %d relations.", csv_path.name, len(hier_map))
+    return hier_map
+
+# ---------------------------------------------------------------------------
+# Parsing helpers (for the BERT output cells)
+# ---------------------------------------------------------------------------
+
+def _safe_load_literal(cell: Any) -> Any:
+    """
+    Try JSON first, then Python literal (list/dict), otherwise return the raw cell.
+    """
     if not isinstance(cell, str):
         return cell
     text = cell.strip()
     if not text:
         return []
+    # JSON
     try:
         return json.loads(text)
-    except json.JSONDecodeError:
-        try:
-            return ast.literal_eval(text)
-        except (ValueError, SyntaxError):
-            return text
+    except Exception:
+        pass
+    # Python literal
+    try:
+        import ast
+        return ast.literal_eval(text)
+    except Exception:
+        return text
+
 
 def _extract_retrieved_list(parsed_item: Any) -> List[str]:
-    """Robustly pluck the 'retrieved' payload from one list item."""
-    if not isinstance(parsed_item, dict):
-        return []
-    raw = parsed_item.get("retrieved")
-    if raw is None or (isinstance(raw, float) and pd.isna(raw)):
-        return []
-    if isinstance(raw, list):
-        return [str(v).strip() for v in raw if isinstance(v, str) and v.strip()]
-    if isinstance(raw, str):
-        return [raw.strip()] if raw.strip() else []
-    return []
+    """
+    From a parsed list element that could be a dict with key 'retrieved' (string or list),
+    or a plain string, return a list of retrieved tokens.
+    """
+    out: List[str] = []
+    if isinstance(parsed_item, dict):
+        if "retrieved" in parsed_item:
+            val = parsed_item["retrieved"]
+            if isinstance(val, str):
+                val = val.strip()
+                if val:
+                    out.append(val)
+            elif isinstance(val, list):
+                out.extend([str(v).strip() for v in val if str(v).strip()])
+    elif isinstance(parsed_item, str):
+        if parsed_item.strip():
+            out.append(parsed_item.strip())
+    return out
+
 
 def parse_extracted_items(cell: Any) -> List[str]:
     """
-    Parses a cell that may contain a JSON/literal list of extracted items.
+    Parses a cell that may contain:
+      - JSON or Python list of dicts/strings (expected), or
+      - A single string that embeds `'retrieved': '...'` or `"retrieved": "..."`.
+    Returns a de-duplicated, order-preserving list of strings.
     """
     parsed = _safe_load_literal(cell)
-    if isinstance(parsed, str):
-        retrieved_pattern = r"'retrieved':\s*'([^']+)'"
-        matches = re.findall(retrieved_pattern, parsed)
-        return list(dict.fromkeys([m.strip() for m in matches if m.strip()]))
 
-    out: list[str] = []
+    # Case 1: string with embedded retrieved="..."
+    if isinstance(parsed, str):
+        out: List[str] = []
+        # support both single- and double-quoted keys/values
+        for pat in (r"'retrieved'\s*:\s*'([^']+)'", r'"retrieved"\s*:\s*"([^"]+)"'):
+            out.extend(re.findall(pat, parsed))
+        # dedupe & normalize whitespace, preserve order
+        seen, final = set(), []
+        for s in (x.strip() for x in out if str(x).strip()):
+            if s not in seen:
+                seen.add(s)
+                final.append(s)
+        return final
+
+    # Case 2: parsed list/dict structure
+    out: List[str] = []
     if isinstance(parsed, list):
         for item in parsed:
             out.extend(_extract_retrieved_list(item))
-    return list(dict.fromkeys(out))
+    elif isinstance(parsed, dict):
+        out.extend(_extract_retrieved_list(parsed))
 
-# ============================================================================
-# PRIMARY TRANSFORMATION FUNCTION
-# ============================================================================
+    # dedupe while preserving order
+    seen, final = set(), []
+    for s in (x.strip() for x in out if str(x).strip()):
+        if s not in seen:
+            seen.add(s)
+            final.append(s)
+    return final
+
+# ---------------------------------------------------------------------------
+# Group mapping helper
+# ---------------------------------------------------------------------------
 
 def _get_group_info(
-    item_uuids: List[str],
+    item_uuids: Sequence[str],
     item_map: Dict[str, Dict[str, Any]],
-    hierarchy_map: Dict[str, str], 
-    group_map: Dict[str, Dict[str, Any]]
+    hierarchy_map: Dict[str, str],
+    group_map: Dict[str, Dict[str, Any]],
 ) -> Tuple[List[str], List[str]]:
     """
-    Finds unique group labels and descriptions for item UUIDs, handling
-    historical IDs and ensuring label-description pairs are synced.
+    Resolve a set of *parent group IDs* for the given item UUIDs, then map to
+    synchronized (labels, descriptions). Dedup is done on parent IDs, not text.
     """
-    group_details = set()
-    for hist_uuid in item_uuids:
-        item_record = item_map.get(hist_uuid)
-        if item_record:
-            current_id = item_record.get('ID')
-            if current_id:
-                parent_id = hierarchy_map.get(current_id)
-                if parent_id:
-                    group_info = group_map.get(parent_id)
-                    if group_info:
-                        label = group_info.get('PREFERREDLABEL')
-                        description = group_info.get('DESCRIPTION', '') # Default to empty
-                        if label:
-                            group_details.add((label, description)) # Add as a tuple
-    
-    if not group_details:
+    parent_ids: set[str] = set()
+
+    for raw_uuid in item_uuids:
+        rec = item_map.get(norm_uuid(raw_uuid)) or item_map.get(str(raw_uuid))
+        if not rec:
+            continue
+        current_id = str(rec.get("ID", "")).strip()
+        if not current_id:
+            continue
+        parent_id = hierarchy_map.get(current_id)
+        if parent_id:
+            parent_ids.add(str(parent_id).strip())
+
+    if not parent_ids:
         return [], []
 
-    # Sort by label (the first element in the tuple) to ensure consistent order
-    sorted_details = sorted(list(group_details))
-    
-    # Unzip into separate, synchronized lists
-    labels, descriptions = zip(*sorted_details)
-    
-    return list(labels), list(descriptions)
+    labels: List[str] = []
+    descriptions: List[str] = []
 
+    # deterministic order
+    for pid in sorted(parent_ids):
+        g = group_map.get(pid) or {}
+        label = str(g.get("PREFERREDLABEL", "")).strip()
+        desc = str(g.get("DESCRIPTION", "")).strip()
+        if label:
+            labels.append(label)
+            descriptions.append(desc)
+
+    return labels, descriptions
+
+# ---------------------------------------------------------------------------
+# Main transformation
+# ---------------------------------------------------------------------------
 
 def transform_csv_to_job_data(
-    csv_file_path: str, 
-    output_json_path: str,
+    csv_file_path: Path,
+    output_json_path: Path,
     occ_map: Dict[str, Dict[str, Any]],
     skill_map: Dict[str, Dict[str, Any]],
     occ_hierarchy_map: Dict[str, str],
     skill_hierarchy_map: Dict[str, str],
     occ_group_map: Dict[str, Dict[str, Any]],
-    skill_group_map: Dict[str, Dict[str, Any]]
+    skill_group_map: Dict[str, Dict[str, Any]],
+    append: bool = False,
 ) -> List[Dict[str, Any]]:
     """
-    Transforms the raw BERT output CSV into a clean JSON file, enriching it
-    with labels, descriptions, and group mappings from the provided taxonomy maps.
+    Transform the raw BERT output CSV into clean JSON, enriching with labels,
+    descriptions, and group mappings from taxonomy maps.
     """
-    print(f"\nReading CSV file: {csv_file_path}")
+    logging.info("Reading BERT CSV: %s", csv_file_path)
     try:
-        df = pd.read_csv(csv_file_path)
+        df = pd.read_csv(csv_file_path, dtype=str, keep_default_na=False, na_values=[])
     except Exception as e:
-        print(f"Error reading CSV: {e}")
+        logging.error("Failed to read CSV: %s", e)
         return []
-    
-    # Rename columns for clarity and consistency
-    df.rename(columns={
-        'extracted_occupation': 'potential_occupations_raw',
-        'extracted_skills2': 'potential_skills_raw',
-        'extracted_requirements': 'potential_skill_requirements_raw'
-    }, inplace=True)
 
-    # Sets of valid UUIDs for efficient filtering
-    valid_occupation_uuids = set(occ_map.keys())
-    valid_skill_uuids = set(skill_map.keys())
-    
-    job_data_list = []
-    for index, row in df.iterrows():
+    # --- Column renames ---
+    df.rename(
+        columns={
+            "extracted_occupation_from_title": "potential_occupations_title_raw",
+            "extracted_occupation_from_full_details": "potential_occupations_fulldescription_raw",
+            "extracted_optional_skills": "potential_skills_optional_raw",
+            "extracted_essential_skills": "potential_skill_essential_raw",
+        },
+        inplace=True,
+    )
+
+    # Build sets of valid UUIDs (lower-cased) for efficient filtering
+    valid_occupation_uuids = {k.lower() for k in occ_map.keys() if UUID_PATTERN.fullmatch(str(k))}
+    valid_skill_uuids = {k.lower() for k in skill_map.keys() if UUID_PATTERN.fullmatch(str(k))}
+
+    # Append/skip mode: read existing JSON to skip already processed
+    processed_keys: set[Tuple[str, str]] = set()
+    existing: List[Dict[str, Any]] = []
+    if append and output_json_path.exists():
         try:
-            # --- 1. Parse and Filter UUIDs from raw columns ---
-            occupations = [
-                occ for occ in parse_extracted_items(row.get('potential_occupations_raw'))
-                if occ in valid_occupation_uuids
-            ]
-            skills = [
-                s for s in parse_extracted_items(row.get('potential_skills_raw'))
-                if s in valid_skill_uuids
-            ]
-            skill_requirements = [
-                sr for sr in parse_extracted_items(row.get('potential_skill_requirements_raw'))
-                if sr in valid_skill_uuids
-            ]
+            existing = json.loads(output_json_path.read_text(encoding="utf-8"))
+            for d in existing:
+                k = (str(d.get("opportunity_group_id", "")), str(d.get("opportunity_ref_id", "")))
+                processed_keys.add(k)
+            logging.info("Append mode: loaded %d existing entries, %d keys.", len(existing), len(processed_keys))
+        except Exception as e:
+            logging.warning("Append mode: could not load existing JSON (%s). Proceeding fresh.", e)
 
-            # --- 2. Map UUIDs to Labels and Descriptions ---
-            occupation_labels = [occ_map.get(occ, {}).get('PREFERREDLABEL', f"UNKNOWN_{occ}") for occ in occupations]
-            occupation_descriptions = [occ_map.get(occ, {}).get('DESCRIPTION', '') for occ in occupations]
+    def iter_rows(it):
+        if tqdm is None:
+            return it
+        return tqdm(it, total=len(df), disable=len(df) < 2000, desc="Processing rows")
 
-            skill_labels = [skill_map.get(sk, {}).get('PREFERREDLABEL', f"UNKNOWN_{sk}") for sk in skills]
-            skill_descriptions = [skill_map.get(sk, {}).get('DESCRIPTION', '') for sk in skills]
+    job_data_list: List[Dict[str, Any]] = []
 
-            skill_requirements_labels = [skill_map.get(sr, {}).get('PREFERREDLABEL', f"UNKNOWN_{sr}") for sr in skill_requirements]
-            skill_requirements_descriptions = [skill_map.get(sr, {}).get('DESCRIPTION', '') for sr in skill_requirements]
-            
-            # --- 3. Map items to their group labels and descriptions ---
+    for _, row in iter_rows(df.iterrows()):
+        try:
+            ogid = str(row.get("opportunity_group_id", "")).strip()
+            orid = str(row.get("opportunity_ref_id", "")).strip()
+            if not ogid or not orid:
+                logging.debug("Skipping row with missing IDs (group_id=%r, ref_id=%r)", ogid, orid)
+                continue
+
+            key = (ogid, orid)
+            if key in processed_keys:
+                continue  # skip already processed
+
+            # 1) Parse raw cells
+            occ_title_raw = parse_extracted_items(row.get("potential_occupations_title_raw"))
+            occ_full_raw  = parse_extracted_items(row.get("potential_occupations_fulldescription_raw"))
+            skl_raw       = parse_extracted_items(row.get("potential_skills_optional_raw"))
+            req_raw       = parse_extracted_items(row.get("potential_skill_essential_raw"))
+
+            # 2) Combine & de-duplicate occupations (title first, then full description)
+            combined_occ_raw = []
+            _seen = set()
+            for s in (occ_title_raw + occ_full_raw):
+                u = norm_uuid(s)
+                if u and u not in _seen:
+                    _seen.add(u)
+                    combined_occ_raw.append(u)
+
+            # 3) Filter against valid sets
+            #    (If you prefer reproducible output regardless of input order, uncomment the "sorted" version.)
+            occupations = [u for u in combined_occ_raw if u in valid_occupation_uuids]
+            # occupations = sorted(set(occupations))  # <- deterministic, order-agnostic alternative
+
+            skills = sorted({u for u in (norm_uuid(x) for x in skl_raw) if u in valid_skill_uuids})
+            skill_requirements = sorted({u for u in (norm_uuid(x) for x in req_raw) if u in valid_skill_uuids})
+
+            # 4) Map UUIDs -> Labels/Descriptions (aligned to "occupations")
+            occupation_labels = [str(occ_map.get(u, {}).get("PREFERREDLABEL", f"UNKNOWN_{u}")).strip() for u in occupations]
+            occupation_descriptions = [str(occ_map.get(u, {}).get("DESCRIPTION", "")).strip() for u in occupations]
+
+            skill_labels = [str(skill_map.get(u, {}).get("PREFERREDLABEL", f"UNKNOWN_{u}")).strip() for u in skills]
+            skill_descriptions = [str(skill_map.get(u, {}).get("DESCRIPTION", "")).strip() for u in skills]
+
+            skill_requirements_labels = [str(skill_map.get(u, {}).get("PREFERREDLABEL", f"UNKNOWN_{u}")).strip() for u in skill_requirements]
+            skill_requirements_descriptions = [str(skill_map.get(u, {}).get("DESCRIPTION", "")).strip() for u in skill_requirements]
+
+            # 5) Group info (by parent IDs -> labels/descriptions in deterministic order)
             occ_groups, occ_group_descs = _get_group_info(occupations, occ_map, occ_hierarchy_map, occ_group_map)
             skill_groups, skill_group_descs = _get_group_info(skills, skill_map, skill_hierarchy_map, skill_group_map)
-            skill_req_groups, skill_req_group_descs = _get_group_info(skill_requirements, skill_map, skill_hierarchy_map, skill_group_map)
+            req_groups, req_group_descs = _get_group_info(skill_requirements, skill_map, skill_hierarchy_map, skill_group_map)
 
-            # --- 4. Assemble the final job entry object ---
+            # 6) Assemble final entry (note: no *_full occupation fields anymore)
             job_entry = {
-                "opportunity_group_id" : str(row['opportunity_group_id']),
-                "opportunity_ref_id" : str(row['opportunity_ref_id']),
-                "opportunity_title": str(row['opportunity_title']).strip(),
-                "opportunity_description": str(row['opportunity_description']).strip(),
-                "opportunity_requirements": str(row['opportunity_requirements']).strip(),
-                "full_details": str(row['full_details']).strip(),
-                
+                "opportunity_group_id": ogid,
+                "opportunity_ref_id": orid,
+                "opportunity_title": str(row.get("opportunity_title", "")).strip(),
+                "opportunity_description": str(row.get("opportunity_description", "")).strip(),
+                "opportunity_requirements": str(row.get("opportunity_requirements", "")).strip(),
+                "full_details": str(row.get("full_details", "")).strip(),
+
                 "potential_occupations_uuids": occupations,
                 "potential_occupations": occupation_labels,
                 "potential_occupations_descriptions": occupation_descriptions,
                 "potential_occupation_groups": occ_groups,
                 "potential_occupation_group_descriptions": occ_group_descs,
 
-                "potential_skills_uuids": skills,
-                "potential_skills": skill_labels,
-                "potential_skills_descriptions": skill_descriptions,
-                "potential_skill_groups": skill_groups,
-                "potential_skill_group_descriptions": skill_group_descs,
+                "potential_optional_skills_uuids": skills,
+                "potential_optional_skills": skill_labels,
+                "potential_optional_skills_descriptions": skill_descriptions,
+                "potential_optional_skill_groups": skill_groups,
+                "potential_optional_skill_group_descriptions": skill_group_descs,
 
-                "potential_skill_requirements_uuids": skill_requirements,
-                "potential_skill_requirements": skill_requirements_labels,
-                "potential_skill_requirements_descriptions": skill_requirements_descriptions,
-                "potential_skill_requirements_groups": skill_req_groups,
-                "potential_skill_requirements_group_descriptions": skill_req_group_descs,
+                "potential_essential_skills_uuids": skill_requirements,
+                "potential_essential_skills": skill_requirements_labels,
+                "potential_essential_skills_descriptions": skill_requirements_descriptions,
+                "potential_essential_skill_groups": req_groups,
+                "potential_essential_skill_group_descriptions": req_group_descs,
             }
-            
+
             job_data_list.append(job_entry)
 
+
         except Exception as e:
-            print(f"✗ Failed to process row {index} (ID: {row.get('opportunity_ref_id', 'N/A')}): {e}")
+            logging.exception("Failed to process a row: %s", e)
             continue
-    
-    # --- 5. Save the transformed data to JSON ---
+
+    # Combine with existing if append mode
+    final_data = (existing + job_data_list) if (append and existing) else job_data_list
+
+    # Save JSON
     try:
-        with open(output_json_path, 'w', encoding='utf-8') as f:
-            json.dump(job_data_list, f, indent=2, ensure_ascii=False)
-        print(f"\n✓ Successfully saved {len(job_data_list)} job entries to {output_json_path}")
+        output_json_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_json_path.open("w", encoding="utf-8") as f:
+            json.dump(final_data, f, indent=2, ensure_ascii=False)
+        logging.info("Saved %d entries -> %s", len(final_data), output_json_path)
     except Exception as e:
-        print(f"✗ Error saving JSON file: {e}")
-    
-    return job_data_list
+        logging.error("Error saving JSON: %s", e)
 
-# ============================================================================
-# EXECUTION SCRIPT
-# ============================================================================
+    return final_data
 
-if __name__ == "__main__":
-    print("--- Starting Data Transformation Pipeline ---")
-    
-    # 1. Build the identifier maps from the taxonomy files
-    print("\n[Step 1/3] Building identifier maps from taxonomy files...")
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Clean BERT results and enrich with taxonomy info.")
+    p.add_argument("--taxonomy-dir", type=Path, required=True,
+                   help="Directory containing taxonomy CSVs: skills.csv, occupations.csv, "
+                        "skill_hierarchy.csv, skill_groups.csv, occupation_hierarchy.csv, occupation_groups.csv")
+    p.add_argument("--input-csv", type=Path, required=True,
+                   help="Path to BERT_extracted_occupations_skills_uuid.csv (or similar).")
+    p.add_argument("--output-json", type=Path, required=True,
+                   help="Where to write the cleaned JSON.")
+    p.add_argument("--append", action="store_true",
+                   help="If set, load existing JSON and skip already-processed opportunity IDs.")
+    p.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging.")
+    return p.parse_args(argv)
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = parse_args(argv)
+    setup_logging(args.verbose)
+
+    tax_dir = args.taxonomy_dir
+    # Resolve taxonomy file paths
+    SKILLS_FULL_ENTITY_PATH = tax_dir / "skills.csv"
+    OCCUPATIONS_FULL_ENTITY_PATH = tax_dir / "occupations.csv"
+    SKILLHIERARCHY_PATH = tax_dir / "skill_hierarchy.csv"
+    SKILLGROUP_PATH = tax_dir / "skill_groups.csv"
+    OCCHIERARCHY_PATH = tax_dir / "occupation_hierarchy.csv"
+    OCCGROUP_PATH = tax_dir / "occupation_groups.csv"
+
+    # Build maps
+    logging.info("[1/3] Building identifier maps...")
     skill_map = build_identifier_map(SKILLS_FULL_ENTITY_PATH)
     occ_map = build_identifier_map(OCCUPATIONS_FULL_ENTITY_PATH)
     skill_group_map = build_identifier_map(SKILLGROUP_PATH)
     occ_group_map = build_identifier_map(OCCGROUP_PATH)
-    
-    print("\n[Step 2/3] Building hierarchy maps...")
+
+    logging.info("[2/3] Building hierarchy maps...")
     skill_hierarchy_map = build_hierarchy_map(SKILLHIERARCHY_PATH)
     occ_hierarchy_map = build_hierarchy_map(OCCHIERARCHY_PATH)
 
-    print(f"\nLoaded {len(skill_map)} skill identifiers and {len(occ_map)} occupation identifiers.")
-    print(f"Loaded {len(skill_group_map)} skill group identifiers and {len(occ_group_map)} occupation group identifiers.")
-    print(f"Loaded {len(skill_hierarchy_map)} skill hierarchy relations and {len(occ_hierarchy_map)} occupation hierarchy relations.")
+    logging.info("Loaded %d skill IDs and %d occupation IDs.", len(skill_map), len(occ_map))
 
-    # 3. Run the main transformation
-    print("\n[Step 3/3] Transforming raw BERT results...")
-    if all([skill_map, occ_map, skill_group_map, occ_group_map, skill_hierarchy_map, occ_hierarchy_map]):
-        job_data = transform_csv_to_job_data(
-            csv_file_path=BERT_RESULTS_CSV_PATH,
-            output_json_path=OUTPUT_JSON_PATH,
-            occ_map=occ_map,
-            skill_map=skill_map,
-            occ_hierarchy_map=occ_hierarchy_map,
-            skill_hierarchy_map=skill_hierarchy_map,
-            occ_group_map=occ_group_map,
-            skill_group_map=skill_group_map
-        )
-    else:
-        print("✗ Halting transformation because one or more maps failed to load.")
-        job_data = []
+    # Transform
+    logging.info("[3/3] Transforming CSV -> JSON...")
+    transform_csv_to_job_data(
+        csv_file_path=args.input_csv,
+        output_json_path=args.output_json,
+        occ_map=occ_map,
+        skill_map=skill_map,
+        occ_hierarchy_map=occ_hierarchy_map,
+        skill_hierarchy_map=skill_hierarchy_map,
+        occ_group_map=occ_group_map,
+        skill_group_map=skill_group_map,
+        append=args.append,
+    )
 
-    # 4. Final summary
-    print("\n[Step 4/4] Pipeline Finished.")
-    if job_data:
-        print(f"✓ Transformation complete! Use '{OUTPUT_JSON_PATH}' for your subsequent analysis.")
-    else:
-        print("\n✗ Transformation failed or produced no data!")
+    logging.info("Done.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
