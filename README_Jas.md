@@ -7,7 +7,7 @@ Set-Location "C:\Users\jasmi\Documents\GitHub\tabiya-livelihoods-classifier"
 # That should activate virtual environment which I set up previously as per https://github.com/tabiya-tech/tabiya-livelihoods-classifier/blob/main/README.md#set-up-virtualenv
 
 # IMPORT JOBS
-# STEP 2: Get new jobs via Harambee API and update jobs database
+# STEP 2: Get new jobs via Harambee API and update jobs database -- THIS IS CURRENTLY STILL DONE IN R, THIS SCRIPT IS NOT CHECKED
 1_1_harambee_jobs_API_and_formatting.py
 
 # STEP 3: View > Command Palette > Python: Select interpreter > CHOOSE VENV
@@ -20,28 +20,25 @@ Set-Location "C:\Users\jasmi\Documents\GitHub\tabiya-livelihoods-classifier"
 2_2_clean_bert_results.py
 
 # LLM RERANKER
-# STEP 6: Then: Give to LLMs
+# STEP 6: Then: Give to LLMs -- Run only for occupations
 3_1_LLM_pick_skills_full_details.py
 
-# STEP 7: Reshape LLM output and merge opportunity information back in
-3_2_clean_LLM_create_opp-db.py
+# STEP 7: Reshape LLM occupation output and merge opportunity information back in
+3_2a_clean_LLM_create_opp-db.py
 
-# STEP 7.5: For robustness, double check the pilot database for any jobs that couldn't map the skills to uuids. 
+# STEP 8: Then: Give bert_cleaned_with_occupation_final.json to LLMs -- Run for essential and optional skills (can do at the same time or after each other)
+3_1_LLM_pick_skills_full_details.py
+
+# STEP 9: For robustness, double check the opportunity database for any jobs that couldn't map the skills to uuids. 
 3_3_debug_find_jobs_hallucinated_skills.py
-# STEP 7.6: Then rerun LLM file with that bert_cleaned_rerun json
+# STEP 10: Then rerun LLM file with that bert_cleaned_rerun json
 3_4_LLM_pick_skills_full_details_rerun.py
 
-# A script that translates final databases to skill_groups and occupation_groups to try matching then -- but note that here the LLM PICKING happened still at the lower level
-3_5_map_DBs_to_groups.py
-
-# Alternatively, this script already PICKS skill_groups, which can then be directly compared to the skill_groups in the jobseeker database
-LLM_pick_skills_GROUPS_full_details
-
 # OTHER
-# STEP 8: Clean pre-existing jobseeker skillsets for jobseeker database
+# STEP 11: Clean pre-existing jobseeker skillsets for jobseeker database
 reshape_jobseeker_database.py
 
-# Finally, run computation (will actually be one on cloud, so this file is just for testing)
+# OLD MATCHING FILES IN CASE I NEED TO LOOK BACK
 # Simple match
 match_skills_simple.py
 # Match based on path structure, using manual weights for types of distances (direct match, same hierarchy, related)

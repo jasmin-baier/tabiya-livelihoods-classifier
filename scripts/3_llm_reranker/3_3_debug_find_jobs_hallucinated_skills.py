@@ -1,3 +1,9 @@
+r"""
+
+python scripts/3_llm_reranker/3_3_debug_find_jobs_hallucinated_skills.py
+
+"""
+
 import json
 from pathlib import Path
 import logging
@@ -12,7 +18,7 @@ def create_rerun_file_from_pilot_db_robust():
     """
     # --- Configuration ---
     base_dir = Path("C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study")
-    processed_db_file = base_dir / "pilot_opportunity_database.json" 
+    processed_db_file = base_dir / "RCT_opportunity_database.json" 
     original_input_file = base_dir / "bert_cleaned.json"
     rerun_input_file = base_dir / "bert_cleaned_rerun.json"
 

@@ -83,9 +83,9 @@ Notes:
 USAGE EXAMPLES:
 
 python scripts/3_llm_reranker/3_2b_clean_LLM_create_opp-db.py `
-  --occupations "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\llm_opportunity_responses_occupations_repaired.ndjson" `
+  --occupations "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\llm_opportunity_responses_occupations.compact.json" `
   --skills-essential "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\llm_opportunity_responses_skills_essential.compact.json" `
-  --skills-optional  "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\llm_opportunity_responses_skills_optional_repaired.ndjson" `
+  --skills-optional  "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\llm_opportunity_responses_skills_optional.compact.json" `
   --skills-entities  "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\skills.csv" `
   --skill-groups-entities "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\skill_groups.csv" `
   --skill-hierarchy  "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\skill_hierarchy.csv" `
@@ -93,10 +93,10 @@ python scripts/3_llm_reranker/3_2b_clean_LLM_create_opp-db.py `
   --extra            "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\harambee_jobs_clean_without_duplicates.csv" `
   --out              "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\RCT_opportunity_database.json" `
   --unmapped-audit-out "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\unmapped_skills_audit.csv" `
-  --remove-null-skill-uuids `
   --skillgroup-level 2 `
   --drop-error-rows `
-  --log-level INFO
+  --log-level INFO `
+  --remove-null-skill-uuids
 
 """
 
