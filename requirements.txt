@@ -6,3 +6,5 @@ tqdm
 torch
 torch_geometric
 pyg-lib # May need to run this command instead, using the correct pytorch version number 'pip install pyg-lib -f https://data.pyg.org/whl/torch-2.7.0+cpu.html' ; find pytorch version using 'python -c "import torch; print(torch.__version__)"'
+ijson
+google-cloud-aiplatform

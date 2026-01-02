@@ -9,6 +9,8 @@ from pathlib import Path
 
 # NOTE: I adapted linker.py; I added a counter
 
+# python scripts/2_run_bert_classifier/2_1_entity_extraction_loop.py
+
 # ----------------------------------
 # Setup
 # ----------------------------------
@@ -63,10 +65,37 @@ file_exists = os.path.exists(filepath_write)
 
 if file_exists:
     try:
-        # Read only the ID column from the existing output
-        prev = pd.read_csv(filepath_write, usecols=["opportunity_group_id"])
-        processed_ids = set(prev["opportunity_group_id"].astype(str))
-        print(f"Found {len(processed_ids):,} previously processed opportunities in the output file.")
+        # Read the existing output as strings to avoid dtype surprises
+        prev = pd.read_csv(filepath_write, dtype=str)
+
+        # Candidate column names to look for (common variations)
+        candidates = ["opportunity_group_id", "opportunity_id", "group_id", "id"]
+        id_col = None
+        for c in candidates:
+            if c in prev.columns:
+                id_col = c
+                break
+
+        # If not found, try heuristics: column containing both 'opportunity' and 'group'
+        if id_col is None:
+            for c in prev.columns:
+                cname = c.lower()
+                if 'opportunity' in cname and 'group' in cname:
+                    id_col = c
+                    break
+
+        # Fallback: use the first non-Unnamed column
+        if id_col is None:
+            for c in prev.columns:
+                if not c.startswith('Unnamed'):
+                    id_col = c
+                    break
+
+        if id_col is None:
+            print("Warning: No suitable ID column found in existing output. Proceeding as if none were processed.")
+        else:
+            processed_ids = set(prev[id_col].dropna().astype(str).str.strip())
+            print(f"Found {len(processed_ids):,} previously processed opportunities in the output file (column '{id_col}').")
     except Exception as e:
         # If the existing file is malformed or missing the column, fall back to treating as empty
         print(f"Warning: Could not read existing processed IDs from output ({e}). Proceeding as if none were processed.")

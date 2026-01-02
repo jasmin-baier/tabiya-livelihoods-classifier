@@ -1,6 +1,8 @@
 r"""
 HOW TO RUN
 
+--> It is better to move all files to Downloads (manually) as the script will run faster than on OneDrive
+
 # 1) Occupations pass
 python scripts/3_llm_reranker/3_1_LLM_pick_skills_full_details.py `
   --process occupations `
@@ -9,8 +11,6 @@ python scripts/3_llm_reranker/3_1_LLM_pick_skills_full_details.py `
   --project ihu-access --location global --model gemini-2.5-pro `
   --ndjson --compact-after `
   --max_output_tokens 4000
-
-  bert_cleaned.json is full file
   
 # 2) Skills OPTIONAL pool
 python scripts/3_llm_reranker/3_1_LLM_pick_skills_full_details.py `

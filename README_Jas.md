@@ -1,6 +1,17 @@
 # PROJECT SETUP
+# ZERO-th step: Make sure poetry is installed systemwide, and Google cloud is set up: 
+IN POWERSHELL
+(Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
+# Also make sure I have hf token in a folder .env file
+# Sign into Google Cloud vie PowerShell
+First install Google Cloud SDK for Windows: https://docs.cloud.google.com/sdk/docs/install-sdk
+sign in with personal gmail
+initialize it and run
+gcloud auth application-default login
+
+# REGULAR RUN
 # FIRST: Maker sure we are in the correct working directory
-Set-Location "C:\Users\jasmi\Documents\GitHub\tabiya-livelihoods-classifier"
+Set-Location "C:\Users\jasmi\OneDrive - Nexus365\Documents\GitHub\tabiya-livelihoods-classifier"
 
 # STEP 1: Once opened VS Code, open Terminal (View > Terminal or CTRL + ~) and run:
 .\classifier_setup.ps1
