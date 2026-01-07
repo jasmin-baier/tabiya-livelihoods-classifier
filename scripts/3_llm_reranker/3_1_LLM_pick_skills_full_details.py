@@ -1,4 +1,8 @@
 r"""
+
+WARNING: Will need to update scripts soon
+ UserWarning: This feature is deprecated as of June 24, 2025 and will be removed on June 24, 2026. For details, see https://cloud.google.com/vertex-ai/generative-ai/docs/deprecations/genai-vertexai-sdk.
+
 HOW TO RUN
 
 --> It is better to move all files to Downloads (manually) as the script will run faster than on OneDrive
@@ -15,21 +19,21 @@ python scripts/3_llm_reranker/3_1_LLM_pick_skills_full_details.py `
 # 2) Skills OPTIONAL pool
 python scripts/3_llm_reranker/3_1_LLM_pick_skills_full_details.py `
   --process skills_optional `
-  --input "C:\Users\jasmi\Downloads\bert_cleaned_with_occupation_skills_firstbatch.json" `
+  --input "C:\Users\jasmi\Downloads\bert_cleaned_with_occupation_skills.json" `
   --output "C:\Users\jasmi\Downloads\llm_opportunity_responses_skills_optional.ndjson" `
   --ndjson --compact-after  
 
 # 3) Skills ESSENTIAL pool
 python scripts/3_llm_reranker/3_1_LLM_pick_skills_full_details.py `
   --process skills_essential `
-  --input "C:\Users\jasmi\Downloads\bert_cleaned_with_occupation_skills_firstbatch.json" `
+  --input "C:\Users\jasmi\Downloads\bert_cleaned_with_occupation_skills.json" `
   --output "C:\Users\jasmi\Downloads\llm_opportunity_responses_skills_essential.ndjson" `
   --ndjson --compact-after
 
 # (Convenience) Run both skills passes back-to-back with one command
 python scripts/3_llm_reranker/3_1_LLM_pick_skills_full_details.py `
   --process skills_both `
-  --input "C:\Users\jasmi\Downloads\bert_cleaned_with_occupation_final.json" `
+  --input "C:\Users\jasmi\Downloads\bert_cleaned_with_occupation_skills.json" `
   --output-optional "C:\Users\jasmi\Downloads\llm_opportunity_responses_skills_optional.ndjson" `
   --output-essential "C:\Users\jasmi\Downloads\llm_opportunity_responses_skills_essential.ndjson" `
   --ndjson --compact-after
