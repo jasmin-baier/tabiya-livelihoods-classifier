@@ -82,6 +82,8 @@ Notes:
 ---------------------------------------------------------------------
 USAGE EXAMPLES:
 
+ALWAYS ADJUST OUTPUT PATH
+
 python scripts/3_llm_reranker/3_2b_clean_LLM_create_opp-db.py `
   --occupations "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\llm_opportunity_responses_occupations.compact.json" `
   --skills-essential "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\llm_opportunity_responses_skills_essential.compact.json" `
@@ -91,13 +93,15 @@ python scripts/3_llm_reranker/3_2b_clean_LLM_create_opp-db.py `
   --skill-hierarchy  "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\skill_hierarchy.csv" `
   --occ-entities     "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\occupations.csv" `
   --extra            "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\harambee_jobs_clean_without_duplicates.csv" `
-  --out              "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\2026-01-03_opportunity_database.json" `
+  --out              "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\2026-02-02_opportunity_database_only_active.json" `
   --unmapped-audit-out "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\unmapped_skills_audit.csv" `
   --skillgroup-level 2 `
   --drop-error-rows `
   --log-level INFO `
-  --remove-null-skill-uuids
+  --remove-null-skill-uuids `
+  --only-active
 
+  # SET "only-active" FLAG TO FILTER OUT EXPIRED OPPORTUNITIES
 """
 
 
@@ -957,6 +961,11 @@ def main(argv: Optional[List[str]] = None) -> int:
              "Accepts integer >=1 (1=top, 2=penultimate, 3=third-from-top, ...), "
              "or aliases: top, penultimate, deepest. Default: 2.",
     )
+    ap.add_argument(
+        "--only-active",
+        action="store_true",
+        help="If set, only keep opportunities where active=true in the output.",
+    )
     args = ap.parse_args(argv)
 
     setup_logging(args.log_level)
@@ -986,6 +995,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         skill_hierarchy_path=args.skill_hierarchy,
         skillgroup_level=str(args.skillgroup_level),
     )
+
+    # Filter to active opportunities if requested
+    if args.only_active:
+        before_filter = len(df)
+        df = df[df.get("active", True) == True].copy()
+        logging.info("Filtered to active opportunities: %d -> %d", before_filter, len(df))
 
     records = dataframe_to_json_records(df)
     validate_before_write(records)
