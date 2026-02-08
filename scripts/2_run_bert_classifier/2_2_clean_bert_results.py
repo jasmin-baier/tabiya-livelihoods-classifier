@@ -22,9 +22,9 @@ Improvements implemented (Nov 3, 2025):
   How to run
   python scripts/2_run_bert_classifier/2_2_clean_bert_results.py `
   --taxonomy-dir "C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/Tabiya South Africa v1.0.1-rc.1" `
-  --input-csv "C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study/2026-01-02_BERT_extracted_occupations_skills_uuid.csv" `
+  --input-csv "C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study/BERT_extracted_occupations_skills_uuid.csv" `
   --output-json "C:/Users/jasmi/OneDrive - Nexus365/Documents/PhD - Oxford BSG/Paper writing projects/Ongoing/Compass/data/pre_study/bert_cleaned.json" `
-  --apped `
+  --append `
   -v
 
 

@@ -32,13 +32,14 @@ is present in the NDJSON (i.e., "found in NDJSON"). Otherwise (default), keep al
 
 Usage
 -----
+
 python scripts/3_llm_reranker/3_2a_clean_LLM_occupations_add_skills.py `
   --ndjson "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\llm_opportunity_responses_occupations.ndjson" `
-  --json   "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\bert_cleaned.json" `
+  --json "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\bert_cleaned.json" `
   --occupations "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\occupations.csv" `
-  --relations   "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\occupation_to_skill_relations.csv" `
-  --skills      "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\skills.csv" `
-  --out         "C:\Users\jasmi\Downloads\bert_cleaned_with_occupation_skills.json" `
+  --relations "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\occupation_to_skill_relations.csv" `
+  --skills "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\skills.csv" `
+  --out "C:\Users\jasmi\Downloads\bert_cleaned_with_occupation_skills.json"
   #--only-enriched # DON'T USE FOR MAIN RUN; only for testing with subset NDJSON
 
 """

@@ -5,7 +5,6 @@ import sys, os
 from pathlib import Path
 
 # TODO this doesn't currently move over all other job columns, like date posted etc.
-# TODO check with Apostolos, is it true that bert only checks first 100 words?
 
 # NOTE: I adapted linker.py; I added a counter
 
