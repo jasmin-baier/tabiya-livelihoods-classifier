@@ -93,7 +93,7 @@ python scripts/3_llm_reranker/3_2b_clean_LLM_create_opp-db.py `
   --skill-hierarchy  "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\skill_hierarchy.csv" `
   --occ-entities     "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\occupations.csv" `
   --extra            "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\harambee_jobs_clean_without_duplicates.csv" `
-  --out              "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\2026-02-02_opportunity_database_only_active.json" `
+  --out              "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\2026-02-08_opportunity_database_only_active.json" `
   --unmapped-audit-out "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\unmapped_skills_audit.csv" `
   --skillgroup-level 2 `
   --drop-error-rows `
