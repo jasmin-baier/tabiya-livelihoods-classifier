@@ -93,7 +93,7 @@ python scripts/3_llm_reranker/3_2b_clean_LLM_create_opp-db.py `
   --skill-hierarchy  "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\skill_hierarchy.csv" `
   --occ-entities     "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\occupations.csv" `
   --extra            "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\harambee_jobs_clean_without_duplicates.csv" `
-  --out              "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\2026-02-08_opportunity_database_only_active.json" `
+  --out              "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\2026-06-26_opportunity_database_only_active.json" `
   --unmapped-audit-out "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\data\pre_study\unmapped_skills_audit.csv" `
   --skillgroup-level 2 `
   --drop-error-rows `
@@ -102,6 +102,7 @@ python scripts/3_llm_reranker/3_2b_clean_LLM_create_opp-db.py `
   --only-active
 
   # SET "only-active" FLAG TO FILTER OUT EXPIRED OPPORTUNITIES
+  # (also drops opportunities with an empty/null opportunity_url)
 """
 
 
@@ -964,7 +965,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument(
         "--only-active",
         action="store_true",
-        help="If set, only keep opportunities where active=true in the output.",
+        help="If set, only keep opportunities where active=true AND that have a "
+             "non-empty opportunity_url in the output.",
     )
     args = ap.parse_args(argv)
 
@@ -1001,6 +1003,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         before_filter = len(df)
         df = df[df.get("active", True) == True].copy()
         logging.info("Filtered to active opportunities: %d -> %d", before_filter, len(df))
+
+        # Drop opportunities without a usable URL (cannot be linked to / applied for)
+        before_url_filter = len(df)
+        url = df.get("opportunity_url")
+        if url is not None:
+            has_url = url.notna() & (url.astype(str).str.strip() != "")
+            df = df[has_url].copy()
+        logging.info(
+            "Dropped opportunities with empty opportunity_url: %d -> %d",
+            before_url_filter, len(df),
+        )
 
     records = dataframe_to_json_records(df)
     validate_before_write(records)

@@ -44,54 +44,20 @@ git lfs pull
 
 ### Install the dependencies
 
-#### Set up virtualenv
-In the **root directory** of the backend project (so, the same directory as this README file), run the following commands:
+#### Set up a conda environment
+In the **root directory** of the project, run:
 
-```shell
-# create a virtual environment
-python3 -m venv venv
-
-# activate the virtual environment
-source venv/bin/activate
+```powershell
+conda env update -f environment.yml --prune
+conda activate tabiya-livelihoods-classifier
 ```
 
-```shell
-# Use the version of the dependencies specified in the lock file
-poetry lock --no-update
-# Install missing and remove unreferenced packages
-poetry install --sync
-```
+This keeps PyTorch out of the base environment on Windows and installs it through conda instead of pip. The remaining Python packages are installed from the environment file.
+
+The inference script now downloads the required NLTK tokenizer data automatically on first run, so you do not need to fetch `punkt` or `punkt_tab` manually.
 
 > Note:
-> Install the dependencies for the training using:
->  ```shell
-> # Use the version of the dependencies specified in the lock file
-> poetry lock --no-update
-> # Install missing and remove unreferenced packages
-> poetry install --sync --with train
->  ```
-
-> Note:
-> Before running any tasks, activate the virtual
-> environment so that the installed dependencies are available:
->  ```shell
->  # activate the virtual environment
->  source venv/bin/activate
->  ```
-> To deactivate the virtual environment, run:
-> ```shell
-> # deactivate the virtual environment
-> deactivate
-> ```
-
-Activate Python and download the NLTK punctuation package to use the sentence tokenizer. You only need to download `punkt` once.
-
-```shell
-python <<EOF
-import nltk
-nltk.download('punkt')
-EOF
-```
+> If you need Poetry for packaging or training workflows, use it inside this conda environment rather than in the base environment.
 
 ### Environment Variable & Configuration
 

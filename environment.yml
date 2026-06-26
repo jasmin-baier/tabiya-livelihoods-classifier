@@ -1,0 +1,22 @@
+name: tabiya-livelihoods-classifier
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch
+  - cpuonly
+  - pip:
+      - nltk==3.8.1
+      - numpy==1.24.3
+      - pandas==2.0.3
+      - sentence-transformers==5.5.1
+      - transformers==5.9.0
+      - tqdm==4.65.0
+      - flask==3.0.3
+      - flask-cors==4.0.1
+      - python-dotenv==1.0.1
+      - ijson==3.1.4
+      - google-cloud-aiplatform==1.132.0

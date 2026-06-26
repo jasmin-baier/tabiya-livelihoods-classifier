@@ -3,7 +3,7 @@ The inference pipeline extracts occupations and skills from a job description an
 
 ## Usage
 
-First, activate the virtual environment as explained [here](../README.md#set-up-virtualenv). 
+First, activate the conda environment as explained [here](../README.md#install-the-dependencies). 
 
 Then, `start python interpreter in the root directory` and run the following commands:
 

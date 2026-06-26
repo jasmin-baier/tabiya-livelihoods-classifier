@@ -40,6 +40,9 @@ python scripts/3_llm_reranker/3_2a_clean_LLM_occupations_add_skills.py `
   --relations "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\occupation_to_skill_relations.csv" `
   --skills "C:\Users\jasmi\OneDrive - Nexus365\Documents\PhD - Oxford BSG\Paper writing projects\Ongoing\Compass\Tabiya South Africa v1.0.1-rc.1\skills.csv" `
   --out "C:\Users\jasmi\Downloads\bert_cleaned_with_occupation_skills.json"
+
+
+  
   #--only-enriched # DON'T USE FOR MAIN RUN; only for testing with subset NDJSON
 
 """
@@ -52,7 +55,7 @@ import sys
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple, Set
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple, Set
 
 
 # ----------------------------- Helpers: I/O ---------------------------------- #
@@ -72,39 +75,125 @@ def load_ndjson(path: Path) -> List[Dict[str, Any]]:
     return rows
 
 
-def load_json_any(path: Path) -> List[Dict[str, Any]]:
+def _first_non_ws_char(path: Path) -> str:
+    with path.open("r", encoding="utf-8") as f:
+        while True:
+            ch = f.read(1)
+            if ch == "":
+                return ""
+            if not ch.isspace():
+                return ch
+
+
+def _iter_json_array(path: Path, chunk_size: int = 1 << 20) -> Iterator[Dict[str, Any]]:
+    """Incrementally parse a top-level JSON array without loading the whole file."""
+    decoder = json.JSONDecoder()
+
+    with path.open("r", encoding="utf-8") as f:
+        while True:
+            ch = f.read(1)
+            if ch == "":
+                return
+            if not ch.isspace():
+                if ch != "[":
+                    raise ValueError(f"Expected '[' at start of JSON array in {path}")
+                break
+
+        buf = ""
+        idx = 0
+        eof = False
+
+        while True:
+            while True:
+                while idx < len(buf) and buf[idx].isspace():
+                    idx += 1
+                if idx < len(buf) and buf[idx] == ",":
+                    idx += 1
+                    continue
+                break
+
+            if idx >= len(buf) and not eof:
+                chunk = f.read(chunk_size)
+                if chunk == "":
+                    eof = True
+                else:
+                    buf += chunk
+                    continue
+
+            if idx >= len(buf) and eof:
+                raise ValueError(f"Unexpected EOF while parsing JSON array in {path}")
+
+            if idx < len(buf) and buf[idx] == "]":
+                return
+
+            try:
+                obj, end = decoder.raw_decode(buf, idx)
+            except json.JSONDecodeError:
+                if eof:
+                    raise
+                chunk = f.read(chunk_size)
+                if chunk == "":
+                    eof = True
+                else:
+                    buf += chunk
+                continue
+
+            idx = end
+
+            if not isinstance(obj, dict):
+                raise ValueError(f"Expected array of JSON objects in {path}, got {type(obj).__name__}")
+
+            yield obj
+
+            if idx > chunk_size:
+                buf = buf[idx:]
+                idx = 0
+
+
+def iter_json_any(path: Path) -> Iterator[Dict[str, Any]]:
     """
-    Load a JSON file that might be:
-      - a JSON array of objects,
-      - a single JSON object (wrapped in {"data":[...]} or similar),
-      - (fallback) newline-delimited JSON masquerading as .json.
-    Returns a list of dicts (records).
+    Yield JSON records from a file that might be:
+      - a JSON array of objects (streamed),
+      - a single JSON object with list under common wrapper keys,
+      - NDJSON (one JSON object per line).
     """
-    text = path.read_text(encoding="utf-8").strip()
-    # Try standard JSON first
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, list):
-            return list(obj)
+    first = _first_non_ws_char(path)
+    if first == "[":
+        yield from _iter_json_array(path)
+        return
+
+    if first == "{":
+        with path.open("r", encoding="utf-8") as f:
+            obj = json.load(f)
         if isinstance(obj, dict):
             for key in ("data", "items", "records", "results"):
-                if key in obj and isinstance(obj[key], list):
-                    return list(obj[key])
-            return [obj]
-    except json.JSONDecodeError:
-        pass
+                val = obj.get(key)
+                if isinstance(val, list):
+                    for it in val:
+                        if isinstance(it, dict):
+                            yield it
+                    return
+            yield obj
+            return
 
-    # Fallback: treat as ndjson
-    rows: List[Dict[str, Any]] = []
-    for ln, line in enumerate(text.splitlines(), 1):
-        s = line.strip()
-        if not s or s.startswith("#"):
-            continue
-        try:
-            rows.append(json.loads(s))
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON on line {ln} of {path}: {e}") from e
-    return rows
+    with path.open("r", encoding="utf-8") as f:
+        for ln, line in enumerate(f, 1):
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            try:
+                obj = json.loads(s)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON on line {ln} of {path}: {e}") from e
+            if isinstance(obj, dict):
+                yield obj
+
+
+def _write_json_record(f, rec: Dict[str, Any], first: bool) -> bool:
+    if not first:
+        f.write(",\n")
+    json.dump(rec, f, ensure_ascii=False)
+    return False
 
 
 def write_json(path: Path, data: List[Dict[str, Any]]) -> None:
@@ -417,7 +506,7 @@ def enrich(
 
     # 1) Load sources
     nd_rows = load_ndjson(ndjson_path)
-    bert_rows = load_json_any(json_path)
+    bert_iter = iter_json_any(json_path)
     occ_rows = load_csv_as_rows(occupations_csv)
     rel_rows = load_csv_as_rows(relations_csv)
     skl_rows = load_csv_as_rows(skills_csv)
@@ -463,90 +552,80 @@ def enrich(
     n_added_ess = 0
     n_added_opt = 0
 
-    # 3) Enrich bert rows
-    for rec in bert_rows:
-        gid = extract_opportunity_group_id(rec)
-        if not gid:
-            continue
+    # 3) Enrich and write in a streaming fashion to avoid loading huge JSON in memory.
+    out_count = 0
+    with out_path.open("w", encoding="utf-8") as out_f:
+        out_f.write("[\n")
+        first_out = True
 
-        choice_label = oppid_to_choice.get(gid)
-        if not choice_label:
-            # No final_choice known for this record
-            continue
+        for rec in bert_iter:
+            if not isinstance(rec, dict):
+                continue
 
-        # Merge the final choice label in a stable field (optional, but useful)
-        rec["final_choice_occupation"] = choice_label
-        n_with_choice += 1
+            gid = extract_opportunity_group_id(rec)
+            choice_label = oppid_to_choice.get(gid) if gid else None
 
-        # Map occupation label -> occupation_id
-        occ_id = occ_label_to_id.get(norm(choice_label))
-        if not occ_id:
-            # Cannot map this occupation; skip skill derivation
-            continue
-        n_occ_id_found += 1
+            if choice_label:
+                rec["final_choice_occupation"] = choice_label
+                n_with_choice += 1
 
-        # Gather skill IDs + relation types for this occupation
-        pairs = rel_index.get(occ_id, [])
+                occ_id = occ_label_to_id.get(norm(choice_label))
+                if occ_id:
+                    n_occ_id_found += 1
 
-        # Build new items to merge per relation bucket
-        new_ess: List[Dict[str, Optional[str]]] = []
-        new_opt: List[Dict[str, Optional[str]]] = []
+                    pairs = rel_index.get(occ_id, [])
 
-        for sid, reltype in pairs:
-            payload = skill_payload.get(sid, {})
-            item = {
-                "label": payload.get("label"),
-                "uuid": payload.get("uuid_origin"),
-                "desc": payload.get("desc"),
-            }
-            reln = norm(reltype) if reltype else ""
-            if reln == "essential":
-                new_ess.append(item)
-            elif reln == "optional":
-                new_opt.append(item)
-            else:
-                # Blank/missing -> both
-                new_ess.append(item)
-                new_opt.append(item)
+                    new_ess: List[Dict[str, Optional[str]]] = []
+                    new_opt: List[Dict[str, Optional[str]]] = []
 
-        # Merge into existing triplets (essential, optional)
-        ess_base = "potential_essential_skills"
-        opt_base = "potential_optional_skills"
+                    for sid, reltype in pairs:
+                        payload = skill_payload.get(sid, {})
+                        item = {
+                            "label": payload.get("label"),
+                            "uuid": payload.get("uuid_origin"),
+                            "desc": payload.get("desc"),
+                        }
+                        reln = norm(reltype) if reltype else ""
+                        if reln == "essential":
+                            new_ess.append(item)
+                        elif reln == "optional":
+                            new_opt.append(item)
+                        else:
+                            new_ess.append(item)
+                            new_opt.append(item)
 
-        existing_ess = _collect_existing_triplet(rec, ess_base)
-        existing_opt = _collect_existing_triplet(rec, opt_base)
+                    ess_base = "potential_essential_skills"
+                    opt_base = "potential_optional_skills"
 
-        before_ess = len(existing_ess)
-        before_opt = len(existing_opt)
+                    existing_ess = _collect_existing_triplet(rec, ess_base)
+                    existing_opt = _collect_existing_triplet(rec, opt_base)
 
-        merged_ess = _merge_items(existing_ess, new_ess)
-        merged_opt = _merge_items(existing_opt, new_opt)
+                    before_ess = len(existing_ess)
+                    before_opt = len(existing_opt)
 
-        # Write back as parallel lists (and count additions)
-        labs, uids, descs = _emit_triplet_lists(merged_ess)
-        rec[ess_base] = labs
-        rec[f"{ess_base}_uuids"] = uids
-        rec[f"{ess_base}_descriptions"] = descs
+                    merged_ess = _merge_items(existing_ess, new_ess)
+                    merged_opt = _merge_items(existing_opt, new_opt)
 
-        labs, uids, descs = _emit_triplet_lists(merged_opt)
-        rec[opt_base] = labs
-        rec[f"{opt_base}_uuids"] = uids
-        rec[f"{opt_base}_descriptions"] = descs
+                    labs, uids, descs = _emit_triplet_lists(merged_ess)
+                    rec[ess_base] = labs
+                    rec[f"{ess_base}_uuids"] = uids
+                    rec[f"{ess_base}_descriptions"] = descs
 
-        n_added_ess += max(0, len(merged_ess) - before_ess)
-        n_added_opt += max(0, len(merged_opt) - before_opt)
+                    labs, uids, descs = _emit_triplet_lists(merged_opt)
+                    rec[opt_base] = labs
+                    rec[f"{opt_base}_uuids"] = uids
+                    rec[f"{opt_base}_descriptions"] = descs
 
-    # 4) Choose output subset
-    if only_enriched:
-        out_rows = [
-            rec for rec in bert_rows
-            if (extract_opportunity_group_id(rec) or "") in gids_in_ndjson
-        ]
-    else:
-        out_rows = bert_rows
+                    n_added_ess += max(0, len(merged_ess) - before_ess)
+                    n_added_opt += max(0, len(merged_opt) - before_opt)
 
-    # 5) Write output
-    write_json(out_path, out_rows)
+            if only_enriched and (gid or "") not in gids_in_ndjson:
+                continue
+
+            first_out = _write_json_record(out_f, rec, first_out)
+            out_count += 1
+
+        out_f.write("\n]\n")
 
     # 6) Print concise summary to stderr
     print(
@@ -556,7 +635,7 @@ def enrich(
         f"  records where occupation ID was found: {n_occ_id_found}\n"
         f"  skills added into essential triplet: {n_added_ess}\n"
         f"  skills added into optional triplet: {n_added_opt}\n"
-        f"  output records written: {len(out_rows)}",
+        f"  output records written: {out_count}",
         file=sys.stderr
     )
 

@@ -1,7 +1,9 @@
 import os
+
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+
 import csv
-import pandas as pd
-import sys, os
+import sys
 from pathlib import Path
 
 # TODO this doesn't currently move over all other job columns, like date posted etc.
@@ -9,6 +11,7 @@ from pathlib import Path
 # NOTE: I adapted linker.py; I added a counter
 
 # python scripts/2_run_bert_classifier/2_1_entity_extraction_loop.py
+# & "C:\Users\jasmi\miniforge3\python.exe" scripts/2_run_bert_classifier/2_1_entity_extraction_loop.py
 
 # ----------------------------------
 # Setup
@@ -30,6 +33,29 @@ os.chdir(ROOT)
 
 # Now project specific import
 from inference.linker import EntityLinker
+
+import nltk
+import pandas as pd
+
+
+def ensure_nltk_resources() -> None:
+    """Download tokenizer data required by nltk.sent_tokenize if it is missing."""
+    required_resources = [
+        "tokenizers/punkt",
+        "tokenizers/punkt_tab/english/",
+    ]
+
+    for resource in required_resources:
+        try:
+            nltk.data.find(resource)
+        except LookupError:
+            if resource.endswith("punkt_tab/english/"):
+                nltk.download("punkt_tab", quiet=True)
+            else:
+                nltk.download("punkt", quiet=True)
+
+
+ensure_nltk_resources()
 
 # Initialize the entity linker
 ## Note: I prefer to first get uuids and map them to preferred label during cleaning, as the if you ask EntityLinker to get preffered_labe directly is inconsistent and sometimes still gets uuids

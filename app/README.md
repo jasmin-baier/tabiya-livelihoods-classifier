@@ -4,7 +4,7 @@ This is a Flask-based API for analyzing job descriptions and predicting relevant
 
 ## Usage
 
-First, activate the virtual environment as explained [here](../README.md#install-the-dependencies). Then, run the following command in python in the `root` directory:
+First, activate the conda environment as explained [here](../README.md#install-the-dependencies). Then, run the following command in python in the `root` directory:
 
 ### Running the API
 
