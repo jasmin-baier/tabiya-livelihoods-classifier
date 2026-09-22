@@ -38,6 +38,14 @@ python scripts/3_llm_reranker/3_1_LLM_pick_skills_full_details.py `
   --output-essential "C:\Users\jasmi\Downloads\llm_opportunity_responses_skills_essential.ndjson" `
   --ndjson --compact-after
 
+CURRENT LAST RUN
+python scripts/3_llm_reranker/3_1_LLM_pick_skills_full_details.py `
+  --process skills_both `
+  --input "C:\Users\jasmi\Downloads\bert_cleaned.json" `
+  --output-optional "C:\Users\jasmi\Downloads\llm_opportunity_responses_skills_optional.ndjson" `
+  --output-essential "C:\Users\jasmi\Downloads\llm_opportunity_responses_skills_essential.ndjson" `
+  --ndjson --compact-after
+
 """
 
 import argparse
